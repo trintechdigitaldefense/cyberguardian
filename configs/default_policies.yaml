@@ -1,0 +1,29 @@
+# Default asset policies for CyberGuardian Decision Service
+defaults:
+  criticality: medium
+  auto_heal: true
+  allowed_actions:
+    - block_ip
+    - isolate_host
+    - kill_process
+    - alert_only
+  change_window: null
+
+assets:
+  - asset_id: "prod-db-01"
+    criticality: critical
+    auto_heal: false
+    allowed_actions:
+      - alert_only
+      - escalate
+    tags: ["database", "production", "pci"]
+
+  - asset_id: "dev-laptop-*"
+    criticality: low
+    auto_heal: true
+    allowed_actions:
+      - block_ip
+      - isolate_host
+      - kill_process
+      - quarantine_file
+    tags: ["endpoint", "developer"]
