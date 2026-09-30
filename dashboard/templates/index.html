@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuardian</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; }
+    header { background: #141b2d; padding: 1rem 2rem; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+    h1 { margin: 0; font-size: 1.25rem; } h1 span { color: #22d3ee; }
+    .badge { background: #164e63; color: #22d3ee; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; }
+    main { padding: 2rem; max-width: 1100px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .card { background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; padding: 1.25rem; }
+    .card h3 { margin: 0 0 0.4rem 0; font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
+    .value { font-size: 1.75rem; font-weight: 700; }
+    .good { color: #4ade80; } .warn { color: #fbbf24; }
+    section { margin-bottom: 1.5rem; padding: 1rem; background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; }
+    section h2 { margin: 0 0 0.5rem 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
+    button { background: #0e7490; color: #fff; border: none; border-radius: 0.4rem; padding: 0.45rem 0.8rem; cursor: pointer; margin-right: 0.35rem; }
+    button.danger { background: #b45309; }
+    pre { white-space: pre-wrap; font-size: 0.75rem; color: #cbd5e1; max-height: 240px; overflow: auto; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Cyber<span>Guardian</span></h1>
+  <span class="badge">{{ user }}</span>
+</header>
+<main>
+  <div class="grid">
+    <div class="card"><h3>Assets</h3><div class="value">{{ risk.get('total_assets', '—') }}</div></div>
+    <div class="card"><h3>Online</h3><div class="value good">{{ risk.get('online', fleet.get('online', '—')) }}</div></div>
+    <div class="card"><h3>Detections 24h</h3><div class="value">{{ risk.get('open_detections', '—') }}</div></div>
+    <div class="card"><h3>Client Mode</h3><div class="value {% if mode.get('client_mode', true) %}good{% else %}warn{% endif %}">{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</div></div>
+  </div>
+  <section id="client-mode-panel">
+    <h2>Client Mode (Human Gate)</h2>
+    <p style="font-size:0.85rem;color:#94a3b8;">ON = disruptive actions need approval. OFF = known-playbook auto-remediate may run. Prefer ON for client pilots.</p>
+    <p id="cm-status">Current: <strong>{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</strong></p>
+    <button type="button" onclick="setClientMode(true)">Client Mode ON</button>
+    <button type="button" class="danger" onclick="setClientMode(false)">Client Mode OFF</button>
+  </section>
+  <section>
+    <h2>Human Gate — Pending Actions</h2>
+    <pre>{{ gate | tojson(indent=2) }}</pre>
+  </section>
+  <section id="remembered-issues">
+    <h2>Remembered Issues</h2>
+    <button type="button" onclick="loadIssues()">Refresh Issues</button>
+    <pre id="issues-out">Click Refresh Issues</pre>
+  </section>
+  <section>
+    <h2>Fleet</h2>
+    <pre>{{ fleet | tojson(indent=2) }}</pre>
+  </section>
+</main>
+<script>
+async function setClientMode(on){
+  const r = await fetch('/ops/client-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({client_mode: !!on})});
+  const d = await r.json();
+  document.getElementById('cm-status').innerHTML = 'Saved: <strong>'+(d.client_mode?'ON':'OFF')+'</strong>';
+  location.reload();
+}
+async function loadIssues(){
+  const el = document.getElementById('issues-out');
+  el.textContent = 'Loading…';
+  try {
+    const r = await fetch('/ops/issues');
+    el.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e) { el.textContent = 'Failed: '+e; }
+}
+</script>
+</body>
+</html>
