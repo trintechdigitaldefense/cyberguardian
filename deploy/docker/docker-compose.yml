@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  decision-service:
+    build: ../../control-plane/decision-service
+    ports: ["8001:8001"]
+  api:
+    build: ../../control-plane/api
+    ports: ["8080:8080"]
+    environment:
+      DECISION_SERVICE_URL: http://decision-service:8001
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+    depends_on: [decision-service]
+  nad-processor:
+    build: ../../control-plane/nad-processor
+    environment:
+      API_URL: http://api:8080
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+    depends_on: [api]
+  dashboard:
+    build: ../../dashboard
+    ports: ["3000:3000"]
+    environment:
+      API_URL: http://api:8080
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+    depends_on: [api]
