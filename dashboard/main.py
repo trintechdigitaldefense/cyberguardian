@@ -1,4 +1,4 @@
-"""CyberGuardian Dashboard — operator UI."""
+"""CyberGuardian Dashboard — operator UI (wired to API gateway)."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +17,7 @@ CREDS = ROOT / "data" / "credentials.json"
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
 
-app = FastAPI(title="CyberGuardian Dashboard", version="1.0.0")
+app = FastAPI(title="CyberGuardian Dashboard", version="1.1.0-pilot")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 sessions: dict = {}
 
@@ -45,9 +45,21 @@ def headers(tenant: str = "default"):
     return h
 
 
+async def api_get(path: str):
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        r = await client.get(f"{API_URL}{path}", headers=headers())
+        return r
+
+
+async def api_post(path: str, body: Optional[dict] = None):
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        r = await client.post(f"{API_URL}{path}", json=body or {}, headers=headers())
+        return r
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "dashboard"}
+    return {"status": "ok", "service": "dashboard", "version": "1.1.0-pilot"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -80,29 +92,46 @@ async def do_login(username: str = Form(...), password: str = Form(...)):
     return resp
 
 
+@app.get("/logout")
+async def logout(request: Request):
+    token = request.cookies.get("cg_session")
+    if token and token in sessions:
+        del sessions[token]
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie("cg_session")
+    return resp
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     sess = check_auth(request)
     if not sess:
         return RedirectResponse("/login", status_code=303)
-    risk, fleet, gate, mode = {}, {}, {}, {}
+    risk, fleet, gate, mode, issues = {}, {}, {}, {}, {}
     async with httpx.AsyncClient(timeout=8.0) as client:
-        try:
-            risk = (await client.get(f"{API_URL}/v1/risk/summary", headers=headers())).json()
-        except Exception:
-            risk = {"error": "api unreachable"}
-        try:
-            fleet = (await client.get(f"{API_URL}/v1/fleet", headers=headers())).json()
-        except Exception:
-            fleet = {}
-        try:
-            gate = (await client.get(f"{API_URL}/v1/gate", headers=headers())).json()
-        except Exception:
-            gate = {}
-        try:
-            mode = (await client.get(f"{API_URL}/v1/client-mode", headers=headers())).json()
-        except Exception:
-            mode = {"client_mode": True}
+        h = headers()
+        for key, path in [
+            ("risk", "/v1/risk/summary"),
+            ("fleet", "/v1/fleet"),
+            ("gate", "/v1/gate"),
+            ("mode", "/v1/client-mode"),
+            ("issues", "/v1/issues/client-view"),
+        ]:
+            try:
+                r = await client.get(f"{API_URL}{path}", headers=h)
+                data = r.json() if r.status_code < 400 else {"error": r.status_code}
+            except Exception:
+                data = {"error": "api unreachable"}
+            if key == "risk":
+                risk = data
+            elif key == "fleet":
+                fleet = data
+            elif key == "gate":
+                gate = data
+            elif key == "mode":
+                mode = data
+            else:
+                issues = data
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -112,33 +141,114 @@ async def index(request: Request):
             "fleet": fleet,
             "gate": gate,
             "mode": mode,
+            "issues": issues,
         },
     )
 
 
-@app.get("/ops/client-mode")
-async def ops_get_mode(request: Request):
+def _require_sess(request: Request):
     if not check_auth(request):
         return JSONResponse({"error": "auth"}, status_code=401)
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        r = await client.get(f"{API_URL}/v1/client-mode", headers=headers())
-        return JSONResponse(r.json(), status_code=r.status_code)
+    return None
+
+
+@app.get("/ops/client-mode")
+async def ops_get_mode(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/client-mode")
+    return JSONResponse(r.json(), status_code=r.status_code)
 
 
 @app.post("/ops/client-mode")
 async def ops_set_mode(request: Request):
-    if not check_auth(request):
-        return JSONResponse({"error": "auth"}, status_code=401)
+    if err := _require_sess(request):
+        return err
     body = await request.json()
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        r = await client.post(f"{API_URL}/v1/client-mode", json=body, headers=headers())
-        return JSONResponse(r.json(), status_code=r.status_code)
+    r = await api_post("/v1/client-mode", body)
+    return JSONResponse(r.json(), status_code=r.status_code)
 
 
 @app.get("/ops/issues")
 async def ops_issues(request: Request):
-    if not check_auth(request):
-        return JSONResponse({"error": "auth"}, status_code=401)
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        r = await client.get(f"{API_URL}/v1/issues/client-view", headers=headers())
-        return JSONResponse(r.json(), status_code=r.status_code)
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/issues/client-view")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/gate")
+async def ops_gate(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/gate")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.post("/ops/gate/approve/{action_id}")
+async def ops_gate_approve(action_id: str, request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_post(f"/v1/gate/approve/{action_id}")
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw": r.text}
+    return JSONResponse(body, status_code=r.status_code)
+
+
+@app.post("/ops/gate/reject/{action_id}")
+async def ops_gate_reject(action_id: str, request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_post(f"/v1/gate/reject/{action_id}")
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw": r.text}
+    return JSONResponse(body, status_code=r.status_code)
+
+
+@app.get("/ops/fleet")
+async def ops_fleet(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/fleet")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/risk")
+async def ops_risk(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/risk/summary")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/inventory")
+async def ops_inventory(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/inventory/report")
+    return PlainTextResponse(r.text, status_code=r.status_code)
+
+
+@app.get("/ops/status")
+async def ops_status(request: Request):
+    """Aggregate health for dashboard connectivity indicator."""
+    if err := _require_sess(request):
+        return err
+    out = {"api": False, "decision": False, "dashboard": True}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{API_URL}/health")
+            out["api"] = r.status_code == 200
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(os.getenv("DECISION_SERVICE_URL", "http://127.0.0.1:8001") + "/health")
+            out["decision"] = r.status_code == 200
+    except Exception:
+        pass
+    return JSONResponse(out)
