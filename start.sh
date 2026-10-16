@@ -5,8 +5,13 @@ cd "$ROOT"
 if [ ! -f "$ROOT/data/credentials.json" ]; then
   echo "WARNING: No data/credentials.json — run ./scripts/setup_credentials.sh"
 fi
-export CYBERGUARDIAN_API_KEY=$(python3 -c "import json;print(json.load(open('$ROOT/data/credentials.json')).get('api_key',''))" 2>/dev/null || true)
-export CG_AGENT_KEY=$(python3 -c "import json;print(json.load(open('$ROOT/data/credentials.json')).get('agent_api_key',''))" 2>/dev/null || true)
+if [ -f "$ROOT/data/credentials.json" ]; then
+  export CYBERGUARDIAN_API_KEY=$(python3 -c "import json;print(json.load(open('$ROOT/data/credentials.json')).get('api_key',''))" 2>/dev/null || true)
+  export CG_AGENT_KEY=$(python3 -c "import json;print(json.load(open('$ROOT/data/credentials.json')).get('agent_api_key',''))" 2>/dev/null || true)
+else
+  export CYBERGUARDIAN_API_KEY="${CYBERGUARDIAN_API_KEY:-}"
+  export CG_AGENT_KEY="${CG_AGENT_KEY:-}"
+fi
 echo "Stopping old processes..."
 pkill -f "uvicorn main:app" 2>/dev/null || true
 pkill -f "agent.py" 2>/dev/null || true
