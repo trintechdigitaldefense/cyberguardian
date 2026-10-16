@@ -1,66 +1,151 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberGuardian</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; }
-    header { background: #141b2d; padding: 1rem 2rem; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+    header { background: #141b2d; padding: 1rem 1.5rem; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .5rem; }
     h1 { margin: 0; font-size: 1.25rem; } h1 span { color: #22d3ee; }
     .badge { background: #164e63; color: #22d3ee; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; }
-    main { padding: 2rem; max-width: 1100px; margin: 0 auto; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-    .card { background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; padding: 1.25rem; }
-    .card h3 { margin: 0 0 0.4rem 0; font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
-    .value { font-size: 1.75rem; font-weight: 700; }
-    .good { color: #4ade80; } .warn { color: #fbbf24; }
-    section { margin-bottom: 1.5rem; padding: 1rem; background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; }
-    section h2 { margin: 0 0 0.5rem 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
-    button { background: #0e7490; color: #fff; border: none; border-radius: 0.4rem; padding: 0.45rem 0.8rem; cursor: pointer; margin-right: 0.35rem; }
+    .link { color: #94a3b8; text-decoration: none; font-size: 0.85rem; margin-left: 0.75rem; }
+    .link:hover { color: #22d3ee; }
+    main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+    .card { background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; padding: 1rem; }
+    .card h3 { margin: 0 0 0.35rem 0; font-size: 0.65rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+    .value { font-size: 1.5rem; font-weight: 700; }
+    .good { color: #4ade80; } .warn { color: #fbbf24; } .bad { color: #f87171; }
+    section { margin-bottom: 1rem; padding: 1rem; background: #141b2d; border: 1px solid #1e293b; border-radius: 0.75rem; }
+    section h2 { margin: 0 0 0.5rem 0; font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+    button { background: #0e7490; color: #fff; border: none; border-radius: 0.4rem; padding: 0.4rem 0.75rem; cursor: pointer; margin: 0.2rem 0.25rem 0.2rem 0; font-size: 0.8rem; }
+    button:hover { filter: brightness(1.1); }
     button.danger { background: #b45309; }
-    pre { white-space: pre-wrap; font-size: 0.75rem; color: #cbd5e1; max-height: 240px; overflow: auto; }
+    button.ok { background: #15803d; }
+    button.ghost { background: transparent; border: 1px solid #334155; color: #cbd5e1; }
+    p.hint { font-size: 0.8rem; color: #94a3b8; margin: 0 0 0.6rem 0; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-bottom: 0.5rem; }
+    .pending-item { border: 1px solid #1e293b; border-radius: 0.5rem; padding: 0.65rem 0.75rem; margin-bottom: 0.5rem; background: #0f1624; }
+    .pending-item strong { color: #fbbf24; }
+    .meta { font-size: 0.75rem; color: #94a3b8; }
+    pre { white-space: pre-wrap; font-size: 0.72rem; color: #cbd5e1; max-height: 220px; overflow: auto; margin: 0.4rem 0 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #1e293b; }
+    th { color: #94a3b8; font-weight: 600; font-size: 0.7rem; text-transform: uppercase; }
+    #toast { position: fixed; bottom: 1rem; right: 1rem; background: #164e63; color: #e2e8f0; padding: 0.6rem 1rem; border-radius: 0.5rem; display: none; z-index: 50; font-size: 0.85rem; }
   </style>
 </head>
 <body>
 <header>
-  <h1>Cyber<span>Guardian</span></h1>
-  <span class="badge">{{ user }}</span>
+  <div style="display:flex;align-items:center;gap:.75rem;">
+    <h1>Cyber<span>Guardian</span></h1>
+    <span class="badge" id="conn-badge">…</span>
+  </div>
+  <div>
+    <span class="badge">{{ user }}</span>
+    <a class="link" href="/logout">Sign out</a>
+  </div>
 </header>
 <main>
   <div class="grid">
-    <div class="card"><h3>Assets</h3><div class="value">{{ risk.get('total_assets', '—') }}</div></div>
-    <div class="card"><h3>Online</h3><div class="value good">{{ risk.get('online', fleet.get('online', '—')) }}</div></div>
-    <div class="card"><h3>Detections 24h</h3><div class="value">{{ risk.get('open_detections', '—') }}</div></div>
-    <div class="card"><h3>Client Mode</h3><div class="value {% if mode.get('client_mode', true) %}good{% else %}warn{% endif %}">{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</div></div>
+    <div class="card"><h3>Assets</h3><div class="value" id="stat-assets">{{ risk.get('total_assets', '—') }}</div></div>
+    <div class="card"><h3>Online</h3><div class="value good" id="stat-online">{{ risk.get('online', fleet.get('online', '—')) }}</div></div>
+    <div class="card"><h3>Detections 24h</h3><div class="value" id="stat-det">{{ risk.get('open_detections', '—') }}</div></div>
+    <div class="card"><h3>Pending Gate</h3><div class="value warn" id="stat-pending">{{ gate.get('pending_count', 0) }}</div></div>
+    <div class="card"><h3>Client Mode</h3><div class="value {% if mode.get('client_mode', true) %}good{% else %}warn{% endif %}" id="stat-cm">{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</div></div>
   </div>
+
   <section id="client-mode-panel">
     <h2>Client Mode (Human Gate)</h2>
-    <p style="font-size:0.85rem;color:#94a3b8;">ON = disruptive actions need approval. OFF = known-playbook auto-remediate may run. Prefer ON for client pilots.</p>
+    <p class="hint">ON = isolate / kill / block need your approval. OFF = known playbooks may auto-remediate. Keep ON for client pilots.</p>
     <p id="cm-status">Current: <strong>{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</strong></p>
-    <button type="button" onclick="setClientMode(true)">Client Mode ON</button>
-    <button type="button" class="danger" onclick="setClientMode(false)">Client Mode OFF</button>
+    <div class="row">
+      <button type="button" class="ok" onclick="setClientMode(true)">Client Mode ON</button>
+      <button type="button" class="danger" onclick="setClientMode(false)">Client Mode OFF</button>
+      <button type="button" class="ghost" onclick="refreshAll()">Refresh all</button>
+    </div>
   </section>
+
   <section>
     <h2>Human Gate — Pending Actions</h2>
-    <pre>{{ gate | tojson(indent=2) }}</pre>
+    <p class="hint">Approve or reject staged actions. Only admin session can act.</p>
+    <div id="gate-list">
+      {% set pending = gate.get('pending') or [] %}
+      {% if pending %}
+        {% for a in pending %}
+        <div class="pending-item" data-id="{{ a.id }}">
+          <strong>{{ a.action }}</strong> → <code>{{ a.target }}</code>
+          <div class="meta">{{ a.reason or '' }}</div>
+          <div class="row" style="margin-top:.4rem">
+            <button type="button" class="ok" onclick="gateAct('{{ a.id }}','approve')">Approve</button>
+            <button type="button" class="danger" onclick="gateAct('{{ a.id }}','reject')">Reject</button>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="hint" id="gate-empty">No pending actions.</p>
+      {% endif %}
+    </div>
   </section>
+
   <section id="remembered-issues">
     <h2>Remembered Issues</h2>
-    <button type="button" onclick="loadIssues()">Refresh Issues</button>
-    <pre id="issues-out">Click Refresh Issues</pre>
+    <div class="row">
+      <button type="button" onclick="loadIssues()">Refresh Issues</button>
+    </div>
+    <pre id="issues-out">{% if issues.get('items') %}{{ issues | tojson(indent=2) }}{% else %}Click Refresh Issues{% endif %}</pre>
   </section>
+
   <section>
     <h2>Fleet</h2>
-    <pre>{{ fleet | tojson(indent=2) }}</pre>
+    <div class="row">
+      <button type="button" class="ghost" onclick="loadFleet()">Refresh Fleet</button>
+    </div>
+    <div id="fleet-table">
+      {% set items = fleet.get('items') or [] %}
+      {% if items %}
+      <table>
+        <thead><tr><th>Asset</th><th>Host</th><th>Status</th><th>Agent</th></tr></thead>
+        <tbody>
+        {% for a in items %}
+          <tr>
+            <td><code>{{ a.asset_id }}</code></td>
+            <td>{{ a.hostname or '—' }}</td>
+            <td class="{% if a.status == 'online' %}good{% else %}bad{% endif %}">{{ a.status }}</td>
+            <td>{{ a.agent_version or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="hint">No agents registered yet.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Inventory Report</h2>
+    <p class="hint">Best-effort LAN discovery (not a full asset database).</p>
+    <button type="button" onclick="loadInventory()">Load inventory report</button>
+    <pre id="inv-out">—</pre>
   </section>
 </main>
+<div id="toast"></div>
 <script>
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
 async function setClientMode(on){
   const r = await fetch('/ops/client-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({client_mode: !!on})});
   const d = await r.json();
   document.getElementById('cm-status').innerHTML = 'Saved: <strong>'+(d.client_mode?'ON':'OFF')+'</strong>';
-  location.reload();
+  document.getElementById('stat-cm').textContent = d.client_mode ? 'ON' : 'OFF';
+  document.getElementById('stat-cm').className = 'value ' + (d.client_mode ? 'good' : 'warn');
+  toast(d.client_mode ? 'Client Mode ON' : 'Client Mode OFF');
 }
 async function loadIssues(){
   const el = document.getElementById('issues-out');
@@ -70,6 +155,89 @@ async function loadIssues(){
     el.textContent = JSON.stringify(await r.json(), null, 2);
   } catch(e) { el.textContent = 'Failed: '+e; }
 }
+async function loadFleet(){
+  try {
+    const r = await fetch('/ops/fleet');
+    const d = await r.json();
+    const box = document.getElementById('fleet-table');
+    const items = d.items || [];
+    if (!items.length) { box.innerHTML = '<p class="hint">No agents registered yet.</p>'; return; }
+    let html = '<table><thead><tr><th>Asset</th><th>Host</th><th>Status</th><th>Agent</th></tr></thead><tbody>';
+    for (const a of items) {
+      const cls = a.status === 'online' ? 'good' : 'bad';
+      html += `<tr><td><code>${a.asset_id||''}</code></td><td>${a.hostname||'—'}</td><td class="${cls}">${a.status||''}</td><td>${a.agent_version||'—'}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    box.innerHTML = html;
+    if (d.online != null) document.getElementById('stat-online').textContent = d.online;
+    if (d.total != null) document.getElementById('stat-assets').textContent = d.total;
+  } catch(e) { toast('Fleet refresh failed'); }
+}
+async function loadGate(){
+  try {
+    const r = await fetch('/ops/gate');
+    const d = await r.json();
+    const pending = d.pending || [];
+    document.getElementById('stat-pending').textContent = d.pending_count != null ? d.pending_count : pending.length;
+    const box = document.getElementById('gate-list');
+    if (!pending.length) {
+      box.innerHTML = '<p class="hint" id="gate-empty">No pending actions.</p>';
+      return;
+    }
+    box.innerHTML = pending.map(a => `
+      <div class="pending-item" data-id="${a.id}">
+        <strong>${a.action}</strong> → <code>${a.target||''}</code>
+        <div class="meta">${a.reason||''}</div>
+        <div class="row" style="margin-top:.4rem">
+          <button type="button" class="ok" onclick="gateAct('${a.id}','approve')">Approve</button>
+          <button type="button" class="danger" onclick="gateAct('${a.id}','reject')">Reject</button>
+        </div>
+      </div>`).join('');
+  } catch(e) { toast('Gate refresh failed'); }
+}
+async function gateAct(id, action){
+  try {
+    const r = await fetch('/ops/gate/'+action+'/'+id, {method:'POST'});
+    const d = await r.json();
+    toast(action === 'approve' ? 'Approved' : 'Rejected');
+    await loadGate();
+  } catch(e) { toast('Action failed'); }
+}
+async function loadInventory(){
+  const el = document.getElementById('inv-out');
+  el.textContent = 'Loading…';
+  try {
+    const r = await fetch('/ops/inventory');
+    el.textContent = await r.text();
+  } catch(e) { el.textContent = 'Failed: '+e; }
+}
+async function refreshAll(){
+  await Promise.all([loadIssues(), loadFleet(), loadGate(), pingStatus()]);
+  try {
+    const r = await fetch('/ops/risk');
+    const d = await r.json();
+    if (d.total_assets != null) document.getElementById('stat-assets').textContent = d.total_assets;
+    if (d.online != null) document.getElementById('stat-online').textContent = d.online;
+    if (d.open_detections != null) document.getElementById('stat-det').textContent = d.open_detections;
+  } catch(_){}
+  toast('Refreshed');
+}
+async function pingStatus(){
+  try {
+    const r = await fetch('/ops/status');
+    const d = await r.json();
+    const ok = d.api;
+    const b = document.getElementById('conn-badge');
+    b.textContent = ok ? 'API online' : 'API offline';
+    b.style.background = ok ? '#14532d' : '#7f1d1d';
+    b.style.color = ok ? '#86efac' : '#fecaca';
+  } catch(_) {
+    const b = document.getElementById('conn-badge');
+    b.textContent = 'API offline';
+    b.style.background = '#7f1d1d';
+  }
+}
+pingStatus();
 </script>
 </body>
 </html>
