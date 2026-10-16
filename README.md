@@ -5,6 +5,7 @@
 
 [![License: Authorized Use](https://img.shields.io/badge/license-authorized%20use%20only-blue)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![ci](https://github.com/trintechdigitaldefense/cyberguardian/actions/workflows/ci.yml/badge.svg)](https://github.com/trintechdigitaldefense/cyberguardian/actions/workflows/ci.yml)
 
 CyberGuardian coordinates detection, human-gated response, issue memory, fleet visibility, network inventory, and operator reporting for Linux environments **without a full SOC**.
 
