@@ -104,9 +104,9 @@ async def index(request: Request):
         except Exception:
             mode = {"client_mode": True}
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "user": sess["user"],
             "risk": risk,
             "fleet": fleet,
