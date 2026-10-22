@@ -1,0 +1,16 @@
+[Unit]
+Description=CyberGuardian Linux protective agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cyberguardian
+EnvironmentFile=-/etc/cyberguardian/agent.env
+ExecStart=/usr/bin/python3 /opt/cyberguardian/agents/linux-ebpf/agent.py --interval 60
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
