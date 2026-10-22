@@ -2,6 +2,18 @@
 from typing import Dict, Any, List
 
 PLAYBOOKS = {
+    "fim_integrity": {
+        "id": "fim_integrity",
+        "name": "Critical File Integrity Change",
+        "match_tags": ["fim", "integrity"],
+        "match_title": ["fim modified", "fim deleted", "/etc/passwd", "/etc/shadow", "/etc/sudoers"],
+        "steps": [
+            {"step": 1, "action": "alert_only", "auto": True, "desc": "Raise integrity alert"},
+            {"step": 2, "action": "isolate_host", "auto": True, "desc": "Isolate if critical path changed"},
+            {"step": 3, "action": "escalate", "auto": False, "desc": "Human: verify change was authorized"},
+        ],
+        "analyst_notes": "Confirm change control / package updates. If unauthorized, preserve evidence and rotate credentials.",
+    },
     "credential_theft": {
         "id": "credential_theft",
         "name": "Credential Theft / Dumping",
