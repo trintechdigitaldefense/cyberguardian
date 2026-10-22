@@ -29,11 +29,14 @@
     .pending-item { border: 1px solid #1e293b; border-radius: 0.5rem; padding: 0.65rem 0.75rem; margin-bottom: 0.5rem; background: #0f1624; }
     .pending-item strong { color: #fbbf24; }
     .meta { font-size: 0.75rem; color: #94a3b8; }
+    .evidence { font-size: 0.72rem; color: #a5b4fc; margin-top: 0.35rem; padding: 0.35rem 0.5rem; background: #0b1220; border-radius: 0.35rem; border-left: 3px solid #6366f1; }
     pre { white-space: pre-wrap; font-size: 0.72rem; color: #cbd5e1; max-height: 220px; overflow: auto; margin: 0.4rem 0 0; }
     table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
     th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #1e293b; }
     th { color: #94a3b8; font-weight: 600; font-size: 0.7rem; text-transform: uppercase; }
     #toast { position: fixed; bottom: 1rem; right: 1rem; background: #164e63; color: #e2e8f0; padding: 0.6rem 1rem; border-radius: 0.5rem; display: none; z-index: 50; font-size: 0.85rem; }
+    .check-ok { color: #4ade80; } .check-bad { color: #f87171; }
+    .score-green { color: #4ade80; } .score-yellow { color: #fbbf24; } .score-red { color: #f87171; }
   </style>
 </head>
 <body>
@@ -55,7 +58,15 @@
     <div class="card"><h3>Pending Gate</h3><div class="value warn" id="stat-pending">{{ gate.get('pending_count', 0) }}</div></div>
     <div class="card"><h3>Client Mode</h3><div class="value {% if mode.get('client_mode', true) %}good{% else %}warn{% endif %}" id="stat-cm">{% if mode.get('client_mode', true) %}ON{% else %}OFF{% endif %}</div></div>
   </div>
-
+  <section id="scorecard-panel">
+    <h2>Pilot Scorecard</h2>
+    <p class="hint">Green checks mean the supervised pilot path is ready. Keep Client Mode ON for client networks.</p>
+    <div class="row">
+      <button type="button" class="ghost" onclick="loadScorecard()">Refresh scorecard</button>
+      <span id="score-status" class="meta">—</span>
+    </div>
+    <div id="score-list"><p class="hint">Click refresh to load.</p></div>
+  </section>
   <section id="client-mode-panel">
     <h2>Client Mode (Human Gate)</h2>
     <p class="hint">ON = isolate / kill / block need your approval. OFF = known playbooks may auto-remediate. Keep ON for client pilots.</p>
@@ -66,64 +77,35 @@
       <button type="button" class="ghost" onclick="refreshAll()">Refresh all</button>
     </div>
   </section>
-
   <section>
     <h2>Human Gate — Pending Actions</h2>
-    <p class="hint">Approve or reject staged actions. Only admin session can act.</p>
+    <p class="hint">Approve queues a real command for the agent. Evidence shows why. Mark benign suppresses re-staging.</p>
     <div id="gate-list">
-      {% set pending = gate.get('pending') or [] %}
-      {% if pending %}
-        {% for a in pending %}
-        <div class="pending-item" data-id="{{ a.id }}">
-          <strong>{{ a.action }}</strong> → <code>{{ a.target }}</code>
-          <div class="meta">{{ a.reason or '' }}</div>
-          <div class="row" style="margin-top:.4rem">
-            <button type="button" class="ok" onclick="gateAct('{{ a.id }}','approve')">Approve</button>
-            <button type="button" class="danger" onclick="gateAct('{{ a.id }}','reject')">Reject</button>
-          </div>
-        </div>
-        {% endfor %}
-      {% else %}
-        <p class="hint" id="gate-empty">No pending actions.</p>
-      {% endif %}
+      <p class="hint" id="gate-empty">Loading…</p>
     </div>
   </section>
-
+  <section>
+    <h2>Action Audit Trail</h2>
+    <p class="hint">Who staged / approved / rejected / executed what — and host results.</p>
+    <div class="row"><button type="button" class="ghost" onclick="loadAudit()">Refresh audit</button></div>
+    <div id="audit-table"><p class="hint">Click refresh to load.</p></div>
+  </section>
   <section id="remembered-issues">
     <h2>Remembered Issues</h2>
-    <div class="row">
-      <button type="button" onclick="loadIssues()">Refresh Issues</button>
-    </div>
-    <pre id="issues-out">{% if issues.get('items') %}{{ issues | tojson(indent=2) }}{% else %}Click Refresh Issues{% endif %}</pre>
+    <div class="row"><button type="button" onclick="loadIssues()">Refresh Issues</button></div>
+    <pre id="issues-out">Click Refresh Issues</pre>
   </section>
-
   <section>
     <h2>Fleet</h2>
-    <div class="row">
-      <button type="button" class="ghost" onclick="loadFleet()">Refresh Fleet</button>
-    </div>
-    <div id="fleet-table">
-      {% set items = fleet.get('items') or [] %}
-      {% if items %}
-      <table>
-        <thead><tr><th>Asset</th><th>Host</th><th>Status</th><th>Agent</th></tr></thead>
-        <tbody>
-        {% for a in items %}
-          <tr>
-            <td><code>{{ a.asset_id }}</code></td>
-            <td>{{ a.hostname or '—' }}</td>
-            <td class="{% if a.status == 'online' %}good{% else %}bad{% endif %}">{{ a.status }}</td>
-            <td>{{ a.agent_version or '—' }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <p class="hint">No agents registered yet.</p>
-      {% endif %}
-    </div>
+    <div class="row"><button type="button" class="ghost" onclick="loadFleet()">Refresh Fleet</button></div>
+    <div id="fleet-table"><p class="hint">No agents registered yet.</p></div>
   </section>
-
+  <section>
+    <h2>Weekly Digest</h2>
+    <p class="hint">Plain-language 7-day summary for operators.</p>
+    <button type="button" onclick="loadWeekly()">Load weekly digest</button>
+    <pre id="weekly-out">—</pre>
+  </section>
   <section>
     <h2>Inventory Report</h2>
     <p class="hint">Best-effort LAN discovery (not a full asset database).</p>
@@ -133,111 +115,90 @@
 </main>
 <div id="toast"></div>
 <script>
-function toast(msg){
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', 2500);
-}
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
+function esc(s){ return String(s??'').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>'); }
 async function setClientMode(on){
-  const r = await fetch('/ops/client-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({client_mode: !!on})});
-  const d = await r.json();
-  document.getElementById('cm-status').innerHTML = 'Saved: <strong>'+(d.client_mode?'ON':'OFF')+'</strong>';
-  document.getElementById('stat-cm').textContent = d.client_mode ? 'ON' : 'OFF';
-  document.getElementById('stat-cm').className = 'value ' + (d.client_mode ? 'good' : 'warn');
-  toast(d.client_mode ? 'Client Mode ON' : 'Client Mode OFF');
+  const r=await fetch('/ops/client-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_mode:!!on})});
+  const d=await r.json();
+  document.getElementById('cm-status').innerHTML='Saved: <strong>'+(d.client_mode?'ON':'OFF')+'</strong>';
+  document.getElementById('stat-cm').textContent=d.client_mode?'ON':'OFF';
+  document.getElementById('stat-cm').className='value '+(d.client_mode?'good':'warn');
+  toast(d.client_mode?'Client Mode ON':'Client Mode OFF'); loadScorecard();
 }
-async function loadIssues(){
-  const el = document.getElementById('issues-out');
-  el.textContent = 'Loading…';
-  try {
-    const r = await fetch('/ops/issues');
-    el.textContent = JSON.stringify(await r.json(), null, 2);
-  } catch(e) { el.textContent = 'Failed: '+e; }
-}
+async function loadIssues(){ const el=document.getElementById('issues-out'); el.textContent='Loading…'; try{ el.textContent=JSON.stringify(await (await fetch('/ops/issues')).json(),null,2);}catch(e){el.textContent='Failed: '+e;} }
 async function loadFleet(){
-  try {
-    const r = await fetch('/ops/fleet');
-    const d = await r.json();
-    const box = document.getElementById('fleet-table');
-    const items = d.items || [];
-    if (!items.length) { box.innerHTML = '<p class="hint">No agents registered yet.</p>'; return; }
-    let html = '<table><thead><tr><th>Asset</th><th>Host</th><th>Status</th><th>Agent</th></tr></thead><tbody>';
-    for (const a of items) {
-      const cls = a.status === 'online' ? 'good' : 'bad';
-      html += `<tr><td><code>${a.asset_id||''}</code></td><td>${a.hostname||'—'}</td><td class="${cls}">${a.status||''}</td><td>${a.agent_version||'—'}</td></tr>`;
-    }
-    html += '</tbody></table>';
-    box.innerHTML = html;
-    if (d.online != null) document.getElementById('stat-online').textContent = d.online;
-    if (d.total != null) document.getElementById('stat-assets').textContent = d.total;
-  } catch(e) { toast('Fleet refresh failed'); }
+  try{
+    const d=await (await fetch('/ops/fleet')).json(); const box=document.getElementById('fleet-table'); const items=d.items||[];
+    if(!items.length){ box.innerHTML='<p class="hint">No agents registered yet.</p>'; return; }
+    let html='<table><thead><tr><th>Asset</th><th>Host</th><th>Status</th><th>Agent</th><th>Actions</th></tr></thead><tbody>';
+    for(const a of items){ const cls=a.status==='online'?'good':'bad';
+      html+=`<tr><td><code>${esc(a.asset_id)}</code></td><td>${esc(a.hostname||'—')}</td><td class="${cls}">${esc(a.status)}</td><td>${esc(a.agent_version||'—')}</td><td><button type="button" class="ghost" onclick="rollbackAsset('${esc(a.asset_id)}')">Undo isolate</button></td></tr>`; }
+    html+='</tbody></table>'; box.innerHTML=html;
+    if(d.online!=null) document.getElementById('stat-online').textContent=d.online;
+    if(d.total!=null) document.getElementById('stat-assets').textContent=d.total;
+  }catch(e){ toast('Fleet refresh failed'); }
 }
+function evidenceHtml(a){ const p=a.parameters||{}; const ev=p.evidence||{}; if(!ev.summary&&p.risk_score==null) return '';
+  const risk=p.risk_score!=null?p.risk_score:(ev.risk_score!=null?ev.risk_score:'—');
+  return `<div class="evidence">Why: ${esc(ev.summary||'staged for approval')} · risk ${esc(risk)}</div>`; }
 async function loadGate(){
-  try {
-    const r = await fetch('/ops/gate');
-    const d = await r.json();
-    const pending = d.pending || [];
-    document.getElementById('stat-pending').textContent = d.pending_count != null ? d.pending_count : pending.length;
-    const box = document.getElementById('gate-list');
-    if (!pending.length) {
-      box.innerHTML = '<p class="hint" id="gate-empty">No pending actions.</p>';
-      return;
-    }
-    box.innerHTML = pending.map(a => `
-      <div class="pending-item" data-id="${a.id}">
-        <strong>${a.action}</strong> → <code>${a.target||''}</code>
-        <div class="meta">${a.reason||''}</div>
+  try{
+    const d=await (await fetch('/ops/gate')).json(); const pending=d.pending||[];
+    document.getElementById('stat-pending').textContent=d.pending_count!=null?d.pending_count:pending.length;
+    const box=document.getElementById('gate-list');
+    if(!pending.length){ box.innerHTML='<p class="hint">No pending actions.</p>'; return; }
+    box.innerHTML=pending.map(a=>`
+      <div class="pending-item" data-id="${esc(a.id)}">
+        <strong>${esc(a.action)}</strong> → <code>${esc(a.target||'')}</code>
+        <div class="meta">${esc(a.reason||'')}</div>${evidenceHtml(a)}
         <div class="row" style="margin-top:.4rem">
-          <button type="button" class="ok" onclick="gateAct('${a.id}','approve')">Approve</button>
-          <button type="button" class="danger" onclick="gateAct('${a.id}','reject')">Reject</button>
-        </div>
-      </div>`).join('');
-  } catch(e) { toast('Gate refresh failed'); }
+          <button type="button" class="ok" onclick="gateAct('${esc(a.id)}','approve')">Approve</button>
+          <button type="button" class="danger" onclick="gateAct('${esc(a.id)}','reject')">Reject</button>
+          <button type="button" class="ghost" onclick="markBenignFromGate('${esc(a.id)}','${esc((a.parameters&&a.parameters.asset_id)||a.target||'')}','${esc((a.action||'')+': '+(a.reason||'')).slice(0,80)}')">Mark benign</button>
+        </div></div>`).join('');
+  }catch(e){ toast('Gate refresh failed'); }
 }
-async function gateAct(id, action){
-  try {
-    const r = await fetch('/ops/gate/'+action+'/'+id, {method:'POST'});
-    const d = await r.json();
-    toast(action === 'approve' ? 'Approved' : 'Rejected');
-    await loadGate();
-  } catch(e) { toast('Action failed'); }
+async function gateAct(id,action){
+  try{ const r=await fetch('/ops/gate/'+action+'/'+id,{method:'POST'}); const d=await r.json();
+    toast(action==='approve'&&d.execution&&d.execution.command_id?'Approved — queued for agent':(action==='approve'?'Approved':'Rejected'));
+    await loadGate(); loadAudit();
+  }catch(e){ toast('Action failed'); }
 }
-async function loadInventory(){
-  const el = document.getElementById('inv-out');
-  el.textContent = 'Loading…';
-  try {
-    const r = await fetch('/ops/inventory');
-    el.textContent = await r.text();
-  } catch(e) { el.textContent = 'Failed: '+e; }
+async function markBenignFromGate(pendingId, assetId, titleHint){
+  const title=(titleHint||'marked benign').replace(/\[staged.*$/,'')||'marked benign';
+  try{ const r=await fetch('/ops/feedback/benign',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:title.slice(0,120),asset_id:assetId,pending_action_id:pendingId,suppress_days:14,note:'operator marked benign'})});
+    const d=await r.json(); toast(d.status==='ok'?'Marked benign (14d suppress)':'Failed'); await loadGate(); loadAudit();
+  }catch(e){ toast('Benign mark failed'); }
 }
-async function refreshAll(){
-  await Promise.all([loadIssues(), loadFleet(), loadGate(), pingStatus()]);
-  try {
-    const r = await fetch('/ops/risk');
-    const d = await r.json();
-    if (d.total_assets != null) document.getElementById('stat-assets').textContent = d.total_assets;
-    if (d.online != null) document.getElementById('stat-online').textContent = d.online;
-    if (d.open_detections != null) document.getElementById('stat-det').textContent = d.open_detections;
-  } catch(_){}
-  toast('Refreshed');
+async function rollbackAsset(assetId){
+  if(!confirm('Queue network restore on '+assetId+'?')) return;
+  try{ const r=await fetch('/ops/rollback/'+encodeURIComponent(assetId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:'operator undo isolate'})});
+    const d=await r.json(); toast(d.status==='queued'?'Rollback queued for agent':'Rollback failed'); loadAudit();
+  }catch(e){ toast('Rollback failed'); }
 }
-async function pingStatus(){
-  try {
-    const r = await fetch('/ops/status');
-    const d = await r.json();
-    const ok = d.api;
-    const b = document.getElementById('conn-badge');
-    b.textContent = ok ? 'API online' : 'API offline';
-    b.style.background = ok ? '#14532d' : '#7f1d1d';
-    b.style.color = ok ? '#86efac' : '#fecaca';
-  } catch(_) {
-    const b = document.getElementById('conn-badge');
-    b.textContent = 'API offline';
-    b.style.background = '#7f1d1d';
-  }
+async function loadAudit(){
+  const box=document.getElementById('audit-table'); box.innerHTML='<p class="hint">Loading…</p>';
+  try{ const d=await (await fetch('/ops/audit')).json(); const items=d.items||[];
+    if(!items.length){ box.innerHTML='<p class="hint">No audit events yet.</p>'; return; }
+    let html='<table><thead><tr><th>When</th><th>Event</th><th>Action</th><th>Target</th><th>Asset</th><th>Actor</th><th>Detail</th></tr></thead><tbody>';
+    for(const a of items){ const when=a.created_at?new Date(a.created_at*1000).toISOString().replace('T',' ').slice(0,19):'—';
+      html+=`<tr><td class="meta">${esc(when)}</td><td>${esc(a.event)}</td><td>${esc(a.action||'')}</td><td><code>${esc(a.target||'')}</code></td><td>${esc(a.asset_id||'')}</td><td>${esc(a.actor||'')}</td><td class="meta">${esc(a.detail||'')}</td></tr>`; }
+    html+='</tbody></table>'; box.innerHTML=html;
+  }catch(e){ box.innerHTML='<p class="hint">Failed to load audit.</p>'; }
 }
-pingStatus();
+async function loadScorecard(){
+  try{ const d=await (await fetch('/ops/scorecard')).json();
+    const st=document.getElementById('score-status'); st.textContent=`Status: ${(d.status||'').toUpperCase()} (${d.score||''})`; st.className='meta score-'+(d.status||'yellow');
+    const checks=d.checks||[]; document.getElementById('score-list').innerHTML='<table><thead><tr><th>Check</th><th>OK</th><th>Detail</th></tr></thead><tbody>'+
+      checks.map(c=>`<tr><td>${esc(c.label)}</td><td class="${c.ok?'check-ok':'check-bad'}">${c.ok?'✓':'✗'}</td><td class="meta">${esc(c.detail||'')}</td></tr>`).join('')+'</tbody></table>';
+  }catch(e){ toast('Scorecard failed'); }
+}
+async function loadWeekly(){ const el=document.getElementById('weekly-out'); el.textContent='Loading…'; try{ el.textContent=await (await fetch('/ops/weekly')).text(); }catch(e){ el.textContent='Failed: '+e; } }
+async function loadInventory(){ const el=document.getElementById('inv-out'); el.textContent='Loading…'; try{ el.textContent=await (await fetch('/ops/inventory')).text(); }catch(e){ el.textContent='Failed: '+e; } }
+async function refreshAll(){ await Promise.all([loadIssues(),loadFleet(),loadGate(),loadAudit(),loadScorecard(),pingStatus()]); try{ const d=await (await fetch('/ops/risk')).json(); if(d.total_assets!=null) document.getElementById('stat-assets').textContent=d.total_assets; if(d.online!=null) document.getElementById('stat-online').textContent=d.online; if(d.open_detections!=null) document.getElementById('stat-det').textContent=d.open_detections; }catch(_){ } toast('Refreshed'); }
+async function pingStatus(){ try{ const d=await (await fetch('/ops/status')).json(); const b=document.getElementById('conn-badge'); b.textContent=d.api?'API online':'API offline'; b.style.background=d.api?'#14532d':'#7f1d1d'; b.style.color=d.api?'#86efac':'#fecaca'; }catch(_){ const b=document.getElementById('conn-badge'); b.textContent='API offline'; b.style.background='#7f1d1d'; } }
+pingStatus(); loadScorecard(); loadGate();
 </script>
 </body>
 </html>
