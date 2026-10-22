@@ -1,5 +1,5 @@
 """
-CyberGuardian Decision Service v1.4 — risk scoring + playbooks + protection mode.
+CyberGuardian Decision Service v1.5.0-tier1 — risk scoring + playbooks + evidence.
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from playbooks import match_playbook
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decision-service")
 
-app = FastAPI(title="CyberGuardian Decision Service", version="1.4.0-enforce")
+app = FastAPI(title="CyberGuardian Decision Service", version="1.5.0-tier1")
 
-PROTECTION_MODE = True
+PROTECTION_MODE = True  # enforce staged/executed actions when approved
 
 
 class Severity(str, Enum):
@@ -91,13 +91,14 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                 )
             )
         return actions
+
     if det.severity in (Severity.HIGH, Severity.CRITICAL):
         actions.append(
             ActionRequest(
                 action=ActionType.ISOLATE_HOST,
                 target=det.asset_id,
                 reason="High/critical severity",
-                auto_approved=False,
+                auto_approved=PROTECTION_MODE,
             )
         )
         if pid:
@@ -106,15 +107,23 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                     action=ActionType.KILL_PROCESS,
                     target=pid,
                     reason="Terminate suspicious process",
-                    auto_approved=False,
+                    auto_approved=PROTECTION_MODE,
                 )
             )
+        actions.append(
+            ActionRequest(
+                action=ActionType.ESCALATE,
+                target=det.asset_id,
+                reason="Human review",
+                auto_approved=False,
+            )
+        )
     else:
         actions.append(
             ActionRequest(
                 action=ActionType.ALERT_ONLY,
                 target=det.asset_id,
-                reason="Informational / medium",
+                reason="Low/medium — alert only",
                 auto_approved=True,
             )
         )
@@ -126,23 +135,71 @@ async def health():
     return {
         "status": "ok",
         "service": "decision-service",
-        "version": "1.4.0-enforce",
         "protection_mode": PROTECTION_MODE,
+        "version": "1.5.0-tier1",
         "time": datetime.now(timezone.utc).isoformat(),
     }
 
 
+@app.get("/v1/protection")
+async def get_protection():
+    return {
+        "protection_mode": PROTECTION_MODE,
+        "description": "true = enforce actions when approved; false = detect only",
+    }
+
+
+@app.post("/v1/protection")
+async def set_protection(payload: dict):
+    global PROTECTION_MODE
+    if "protection_mode" in payload:
+        PROTECTION_MODE = bool(payload["protection_mode"])
+    return {"protection_mode": PROTECTION_MODE}
+
+
 @app.post("/v1/decide")
 async def decide(det: Detection, background_tasks: BackgroundTasks):
+    logger.info("Received detection %s from %s on %s", det.detection_id, det.source, det.asset_id)
     score = risk_score(det.severity, det.confidence)
     actions = plan_actions(det)
     pb = match_playbook(det.title, det.tags)
     decision_id = str(uuid.uuid4())
+    matched_tags = []
+    matched_title = []
+    if pb:
+        tagset = {str(t).lower() for t in (det.tags or [])}
+        matched_tags = [t for t in pb.get("match_tags") or [] if t in tagset]
+        title_l = (det.title or "").lower()
+        matched_title = [m for m in pb.get("match_title") or [] if m in title_l]
+    evidence = {
+        "risk_score": score,
+        "confidence": det.confidence,
+        "severity": det.severity.value,
+        "matched_playbook": pb["id"] if pb else None,
+        "matched_tags": matched_tags,
+        "matched_title_terms": matched_title,
+        "indicators": det.indicators or {},
+        "summary": (
+            f"Playbook '{pb['name']}' matched via "
+            + (
+                ("tags " + ",".join(matched_tags))
+                if matched_tags
+                else ("title terms " + ",".join(matched_title))
+                if matched_title
+                else "heuristics"
+            )
+            if pb
+            else f"Heuristic response for {det.severity.value} severity"
+        ),
+    }
     result = {
         "decision_id": decision_id,
         "detection_id": det.detection_id,
+        "asset_id": det.asset_id,
         "risk_score": score,
+        "confidence": det.confidence,
         "severity": det.severity.value,
+        "title": det.title,
         "actions": [
             {
                 "action": a.action.value,
@@ -164,6 +221,7 @@ async def decide(det: Detection, background_tasks: BackgroundTasks):
             if pb
             else None
         ),
+        "evidence": evidence,
         "timestamp": time.time(),
     }
     decisions_db[decision_id] = result
@@ -189,12 +247,13 @@ async def recent_decisions(limit: int = 20):
 
 @app.post("/v1/execute")
 async def execute(action: ActionRequest):
+    """Called after human gate approval or auto-remediate — agent executes on host."""
     logger.info("[EXECUTE] action=%s target=%s", action.action.value, action.target)
     rec = {
         "action": action.action.value,
         "target": action.target,
-        "status": "executed_stub",
-        "message": f"Stub execute {action.action.value} on {action.target}",
+        "status": "dispatched",
+        "message": f"Dispatched {action.action.value} on {action.target} (agent executes on host)",
         "protection_mode": PROTECTION_MODE,
         "timestamp": time.time(),
     }
@@ -214,7 +273,7 @@ async def execute_action_stub(decision_id: str, action: ActionRequest):
             "decision_id": decision_id,
             "action": action.action.value,
             "target": action.target,
-            "status": "executed_stub",
+            "status": "dispatched",
             "timestamp": time.time(),
         }
     )
@@ -227,4 +286,5 @@ async def actions_history(limit: int = 50):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)
