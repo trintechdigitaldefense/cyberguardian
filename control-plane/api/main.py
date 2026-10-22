@@ -11,16 +11,22 @@ _cache = _here / "_gateway_assembled.py"
 
 
 def _load_parts() -> str:
-    plain = sorted(p for p in _parts_dir.glob("part*.py") if not p.name.endswith(".z64"))
+    plain = sorted(p for p in _parts_dir.glob("part*.py") if p.suffix == ".py")
     if plain:
         return "".join(p.read_text() for p in plain)
+    chunks = sorted(_parts_dir.glob("chunk*.z64"))
+    if chunks:
+        out = []
+        for p in chunks:
+            out.append(zlib.decompress(base64.b64decode(p.read_text().strip())))
+        return b"".join(out).decode()
     z64 = sorted(_parts_dir.glob("part*.py.z64"))
-    if not z64:
-        raise RuntimeError("missing gateway_parts/part*.py or part*.py.z64")
-    out = []
-    for p in z64:
-        out.append(zlib.decompress(base64.b64decode(p.read_text().strip())).decode())
-    return "".join(out)
+    if z64:
+        out = []
+        for p in z64:
+            out.append(zlib.decompress(base64.b64decode(p.read_text().strip())).decode())
+        return "".join(out)
+    raise RuntimeError("missing gateway_parts")
 
 
 def _ensure():
