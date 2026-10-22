@@ -17,7 +17,7 @@ CREDS = ROOT / "data" / "credentials.json"
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
 
-app = FastAPI(title="CyberGuardian Dashboard", version="1.2.0-tier1")
+app = FastAPI(title="CyberGuardian Dashboard", version="1.4.0-tier3")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 sessions: dict = {}
 
@@ -59,7 +59,7 @@ async def api_post(path: str, body: Optional[dict] = None):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "dashboard", "version": "1.2.0-tier1"}
+    return {"status": "ok", "service": "dashboard", "version": "1.4.0-tier3"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -135,14 +135,7 @@ async def index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        {
-            "user": sess["user"],
-            "risk": risk,
-            "fleet": fleet,
-            "gate": gate,
-            "mode": mode,
-            "issues": issues,
-        },
+        {"user": sess["user"], "risk": risk, "fleet": fleet, "gate": gate, "mode": mode, "issues": issues},
     )
 
 
@@ -275,3 +268,46 @@ async def ops_weekly(request: Request):
         return err
     r = await api_get("/v1/reports/weekly")
     return PlainTextResponse(r.text, status_code=r.status_code)
+
+
+@app.post("/ops/rollback/{asset_id}")
+async def ops_rollback(asset_id: str, request: Request):
+    if err := _require_sess(request):
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    r = await api_post(f"/v1/rollback/{asset_id}", body)
+    try:
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception:
+        return JSONResponse({"raw": r.text}, status_code=r.status_code)
+
+
+@app.post("/ops/feedback/benign")
+async def ops_benign(request: Request):
+    if err := _require_sess(request):
+        return err
+    body = await request.json()
+    r = await api_post("/v1/feedback/benign", body)
+    try:
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception:
+        return JSONResponse({"raw": r.text}, status_code=r.status_code)
+
+
+@app.get("/ops/feedback")
+async def ops_feedback(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/feedback")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/hardening")
+async def ops_hardening(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/hardening")
+    return JSONResponse(r.json(), status_code=r.status_code)
