@@ -1,23 +1,31 @@
-# Full API gateway — clone gap
+# Full API gateway — push from your machine
 
-The complete `main.py` (~52KB) cannot be uploaded via the GitHub Contents API from the automation path.
+Automation cannot upload the complete ~52KB `main.py` via the Contents API without corruption.
 
-## Close the gap (one command on your machine)
+**Source of truth (local):**
+
+```
+/home/workdir/artifacts/CyberGuardian/control-plane/api/main.py
+```
+
+Or tarball: `artifacts/cyberguardian-api-main-1.5.1.tgz`
+
+## One command (closes the clone gap)
 
 ```bash
-# Option A — from the workspace tree
 cd /home/workdir/artifacts/CyberGuardian
-git remote -v   # ensure origin is trintechdigitaldefense/cyberguardian
 git add control-plane/api/main.py
 git commit -m "v1.5.1: full API gateway main.py"
 git push origin main
-
-# Option B — from the release tarball
-tar xzf cyberguardian-api-main-1.5.1.tgz
-cp control-plane/api/main.py /path/to/clone/control-plane/api/main.py
-cd /path/to/clone && git add control-plane/api/main.py && git commit -m "v1.5.1: full API gateway" && git push
 ```
 
-Until that lands, **run from the local tree** (`./start.sh`) — local `main.py` is complete (queue, audit, identity, rollback, FP, WAL).
+After push, delete leftover junk if still present:
 
-Optional: `main_loader.py` + `gateway_parts/` assemble the same source if you prefer split files.
+```bash
+git rm -f control-plane/api/gateway_parts/chunk*.z64 2>/dev/null
+git rm -rf control-plane/api/main_b64 2>/dev/null
+git commit -m "cleanup: remove failed upload fragments" || true
+git push
+```
+
+Until then: run from the local tree with `./start.sh` — local main.py is complete.
