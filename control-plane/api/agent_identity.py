@@ -1,4 +1,4 @@
-"""Signed agent identity — host fingerprint + registration token (Tier 2)."""
+"""Signed agent identity — host fingerprint + registration token."""
 from __future__ import annotations
 
 import hashlib
@@ -48,6 +48,12 @@ def sign_registration(asset_id: str, fingerprint: str, ts: float) -> str:
     return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
 
 
+def _strict_required() -> bool:
+    if os.environ.get("CG_REQUIRE_AGENT_IDENTITY", "").lower() in ("1", "true", "yes"):
+        return True
+    return bool(_load_creds().get("require_agent_identity"))
+
+
 def verify_registration(
     asset_id: str,
     fingerprint: str,
@@ -59,6 +65,8 @@ def verify_registration(
         return False, "missing_signature"
     secret = identity_secret()
     if not secret:
+        if _strict_required():
+            return False, "identity_secret_required"
         return True, "identity_secret_unset_skip"
     now = time.time()
     if abs(now - ts) > max_age_seconds:
