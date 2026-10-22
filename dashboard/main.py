@@ -17,7 +17,7 @@ CREDS = ROOT / "data" / "credentials.json"
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
 
-app = FastAPI(title="CyberGuardian Dashboard", version="1.1.0-pilot")
+app = FastAPI(title="CyberGuardian Dashboard", version="1.2.0-tier1")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 sessions: dict = {}
 
@@ -59,7 +59,7 @@ async def api_post(path: str, body: Optional[dict] = None):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "dashboard", "version": "1.1.0-pilot"}
+    return {"status": "ok", "service": "dashboard", "version": "1.2.0-tier1"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -235,7 +235,6 @@ async def ops_inventory(request: Request):
 
 @app.get("/ops/status")
 async def ops_status(request: Request):
-    """Aggregate health for dashboard connectivity indicator."""
     if err := _require_sess(request):
         return err
     out = {"api": False, "decision": False, "dashboard": True}
@@ -252,3 +251,27 @@ async def ops_status(request: Request):
     except Exception:
         pass
     return JSONResponse(out)
+
+
+@app.get("/ops/audit")
+async def ops_audit(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/audit?limit=40")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/scorecard")
+async def ops_scorecard(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/pilot/scorecard")
+    return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/ops/weekly")
+async def ops_weekly(request: Request):
+    if err := _require_sess(request):
+        return err
+    r = await api_get("/v1/reports/weekly")
+    return PlainTextResponse(r.text, status_code=r.status_code)
