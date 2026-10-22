@@ -2,6 +2,18 @@
 from typing import Dict, Any, List
 
 PLAYBOOKS = {
+    "auth_bruteforce": {
+        "id": "auth_bruteforce",
+        "name": "Auth / Brute-force / Root Login",
+        "match_tags": ["auth", "bruteforce", "root_login"],
+        "match_title": ["brute-force", "root ssh", "sudo authentication failure"],
+        "steps": [
+            {"step": 1, "action": "alert_only", "auto": True, "desc": "Raise auth alert"},
+            {"step": 2, "action": "block_ip", "auto": True, "desc": "Block source IP if known"},
+            {"step": 3, "action": "escalate", "auto": False, "desc": "Human: review accounts and MFA"},
+        ],
+        "analyst_notes": "Confirm not a locked-out legit user. Enable fail2ban/MFA if missing.",
+    },
     "fim_integrity": {
         "id": "fim_integrity",
         "name": "Critical File Integrity Change",
