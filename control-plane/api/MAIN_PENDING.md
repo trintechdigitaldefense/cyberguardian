@@ -1,18 +1,16 @@
-# Full API gateway (clone gap)
+# API gateway layout (v1.5.1+)
 
-Complete `main.py` (~51KB, Tier 1–3 + strength) exceeds the Contents API push limit from automation.
+`main.py` is a thin loader. Full source is split for GitHub:
 
-**Source of truth:** local tree or `cyberguardian-1.5.1-strength.tgz`
+- `gateway_parts/part0.py`
+- `gateway_parts/part1.py`
+- `gateway_parts/part2.py`
+
+On first import / uvicorn start, parts are joined into `_gateway_assembled.py` and loaded as `app`.
+
+Local development may also keep a monolithic `main.py` — the loader is what Git clones use.
 
 ```bash
-cp control-plane/api/main.py /path/to/clone/control-plane/api/main.py
-cd /path/to/clone && git add control-plane/api/main.py
-git commit -m "v1.5.1: full API gateway" && git push
-
-# Or assemble from parts after they are on disk:
-python3 control-plane/api/assemble_main.py
+# verify after clone
+cd control-plane/api && python3 -c "from main import app; print(app.title)"
 ```
-
-`./start.sh` runs assemble when `main.py.part*` exist.
-
-Includes: dual keys, client mode, gate, command queue, audit, allowlist, strict identity option, sentinel, rollback, FP feedback, WAL, scorecard, weekly digest.
