@@ -1,16 +1,12 @@
 # CyberGuardian
 
 **Supervised self-healing cybersecurity control plane + Linux agent**  
-**v1.1.0-pilot** · TrinTech Digital Defense (Trinidad & Tobago)
+**v1.4.0-tier3** · TrinTech Digital Defense (Trinidad & Tobago)
 
-[![License: Authorized Use](https://img.shields.io/badge/license-authorized%20use%20only-blue)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![ci](https://github.com/trintechdigitaldefense/cyberguardian/actions/workflows/ci.yml/badge.svg)](https://github.com/trintechdigitaldefense/cyberguardian/actions/workflows/ci.yml)
+Detect → Decide → **Approve** → Contain → Audit.
 
-CyberGuardian coordinates detection, human-gated response, issue memory, fleet visibility, network inventory, and operator reporting for Linux environments **without a full SOC**.
-
-> **Not** a 24/7 SOC replacement, full Windows/macOS EDR, or open-ended autonomous AI.  
-> Default posture: **Client Mode ON** — isolate / kill / block require human approval.
+> **Not** a 24/7 SOC, full multi-OS EDR, or open-ended autonomous AI.  
+> Default: **Client Mode ON** — isolate / kill / block need human approval.
 
 ---
 
@@ -18,156 +14,92 @@ CyberGuardian coordinates detection, human-gated response, issue memory, fleet v
 
 | Service | Port | Role |
 |---------|------|------|
-| Decision Service | 8001 | Risk scoring, playbooks, protection mode |
-| API Gateway | 8080 | Assets, detections, gate, issues, fleet, inventory |
-| NAD Processor | 8002 | Anomaly helpers / simulation (pilot) |
-| **Dashboard** | **3000** | Operator UI — login, Client Mode, gate approve/reject, fleet, issues, inventory |
-| Linux Agent | — | Process / baseline scans, offline queue |
-
-**Loop:** Detection → risk / playbook → stage (Client Mode ON) or known-playbook auto-remediate (OFF) → issue memory → audit / reports.
+| Decision Service | 8001 | Risk scoring, playbooks, evidence |
+| API Gateway | 8080 | Gate, command queue, audit, allowlist, identity, FP feedback |
+| Dashboard | **3000** | Operator UI (fully proxied to API) |
+| Linux Agent | — | Detect, poll commands, real containment |
 
 ```
 Agent --(agent key)--> API /v1/detections
                            |
-                           v
                      Decision /v1/decide
                            |
-           +---------------+---------------+
-           | Client Mode ON                | Client Mode OFF
-           v                               v
-     pending_actions (gate)         known-playbook execute
-           |                               |
-           v                               v
-     Dashboard approve/reject        issue_memory auto_fixed
+           Client Mode ON  |  Client Mode OFF + allowlist
+           pending gate    |  auto-queue to agent
+           Dashboard approve --> agent executes (kill/isolate/block)
 ```
 
 ---
 
-## Dashboard (fully wired)
+## Dashboard wiring (all operator actions)
 
-After login at `http://<host>:3000` the operator can:
+| UI | Backend |
+|----|---------|
+| Client Mode ON/OFF | `POST /v1/client-mode` |
+| Gate Approve / Reject | `POST /v1/gate/approve|reject/{id}` |
+| **Mark benign** | `POST /v1/feedback/benign` (14d suppress) |
+| **Undo isolate** | `POST /v1/rollback/{asset_id}` |
+| Audit trail | `GET /v1/audit` |
+| Pilot scorecard | `GET /v1/pilot/scorecard` |
+| Weekly digest | `GET /v1/reports/weekly` |
+| Fleet + inventory | `GET /v1/fleet`, `/v1/inventory/report` |
 
-| UI panel | Backend |
-|----------|---------|
-| Summary cards (assets, online, detections, pending, Client Mode) | `/v1/risk/summary`, `/v1/fleet`, `/v1/gate`, `/v1/client-mode` |
-| Client Mode ON / OFF | `POST /v1/client-mode` |
-| Human Gate — Approve / Reject | `POST /v1/gate/approve/{id}`, `POST /v1/gate/reject/{id}` |
-| Remembered Issues | `GET /v1/issues/client-view` |
-| Fleet table | `GET /v1/fleet` |
-| Inventory report | `GET /v1/inventory/report` |
-| Connectivity badge | API health probe |
-
-Dashboard proxies (session cookie required):
-
-- `GET/POST /ops/client-mode`
-- `GET /ops/gate` · `POST /ops/gate/approve/{id}` · `POST /ops/gate/reject/{id}`
-- `GET /ops/issues` · `GET /ops/fleet` · `GET /ops/risk` · `GET /ops/inventory`
-- `GET /ops/status`
-
----
-
-## Features (pilot)
-
-- **Dual API keys** — admin (gate, Client Mode) ≠ agent (register, detections, remember)
-- **Client Mode** — default ON; disruptive actions staged for human approval
-- **Issue memory** — persistent fingerprints; auto-remediate only for known playbooks when Client Mode OFF
-- **Offline queue** — agent continues when controller is unreachable
-- **Human gate** — approve / reject from the dashboard
-- **Playbooks** — credential theft, ransomware, C2 beacon
-- **Fleet + inventory** — registered assets, last-seen, best-effort discovery report
-- **Dry-run + health scripts** — verify before client networks
+Dashboard proxies (session required): `/ops/client-mode`, `/ops/gate/*`, `/ops/audit`, `/ops/scorecard`, `/ops/weekly`, `/ops/rollback/{id}`, `/ops/feedback/benign`, `/ops/fleet`, `/ops/hardening`.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1) Python 3.10+
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 2) First-run credentials (writes data/credentials.json mode 600)
 ./scripts/setup_credentials.sh
 
-# 3) Start stack
+# Hardened (localhost only) — recommended for pilots
+export CG_HARDENED=1
 ./start.sh
 
-# 4) Verify
-./scripts/client_health.sh
-./scripts/dry_run_pilot.sh
+./scripts/pilot_day1.sh
 ```
 
 | URL | Purpose |
 |-----|--------|
-| http://\<host\>:3000 | Dashboard (login required) |
-| http://127.0.0.1:8080/health | API health |
-| http://127.0.0.1:8001/health | Decision health |
+| http://127.0.0.1:3000 | Dashboard |
+| http://127.0.0.1:8080/health | API |
 
-Login is whatever you set in `setup_credentials.sh` (no hardcoded lab passwords in the repo).
+SSH tunnel if remote: `ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 user@host`
+
+> **Note:** On first start, `assemble_main.py` rebuilds `control-plane/api/main.py` from `main.py.part1` + `main.py.part2` if needed (GitHub file-size workaround).
 
 ---
 
-## Agent on a Linux host
+## Agent
 
 ```bash
-export CYBERGUARDIAN_API=http://CONTROLLER_IP:8080
-export CYBERGUARDIAN_API_KEY="<agent_api_key from credentials.json>"
-export CG_CONTROLLER_URL=http://CONTROLLER_IP:8080
+export CYBERGUARDIAN_API=http://CONTROLLER:8080
+export CYBERGUARDIAN_API_KEY="<agent_api_key>"
+export CYBERGUARDIAN_TAGS=lab,dev   # optional; only for allowlisted auto when CM OFF
 python3 agents/linux-ebpf/agent.py --interval 60
 ```
 
-Use the **agent** key on endpoints. Use the **admin** key only for dashboard/ops/gate.
-
 ---
 
-## Client Mode
+## Safety model
 
-| Mode | Behaviour |
-|------|----------|
-| **ON** (default) | Disruptive actions staged; auto-remediate blocked |
-| **OFF** | Known-playbook auto-remediate may run |
+| Feature | Behaviour |
+|---------|----------|
+| Client Mode ON | Disruptive actions staged for human approval |
+| Allowlist | When CM OFF: only lab/dev/staging; production tags denied |
+| Containment | Real SIGTERM/SIGKILL, nft/iptables (root for network) |
+| Rollback | Undo isolate via agent restore_network |
+| FP feedback | Mark benign → suppress restaging 14 days |
+| Identity | Host fingerprint + optional HMAC |
 
-```bash
-curl -X POST -H "X-API-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"client_mode":true}' http://127.0.0.1:8080/v1/client-mode
-```
-
-Or toggle from the dashboard.
-
----
-
-## Project layout
-
-```
-CyberGuardian/
-├── agents/linux-ebpf/     # Protective agent + offline queue
-├── control-plane/
-│   ├── api/               # Gateway (dual-key auth, gate, issues, fleet)
-│   ├── decision-service/  # Risk + playbooks
-│   ├── nad-processor/     # Simulation helpers
-│   ├── tie/ · compliance/ # Pilot stubs
-├── dashboard/             # Operator UI (proxies to API)
-├── scripts/               # setup_credentials, dry_run, health
-├── docs/                  # PILOT_SCOPE, ARCHITECTURE
-├── start.sh · stop.sh
-└── requirements.txt
-```
-
----
-
-## Pilot honesty
-
-See [docs/PILOT_SCOPE.md](docs/PILOT_SCOPE.md).
-
-- Linux visibility + supervised response — **not** a full SOC or EDR for every OS
-- Auto-remediate uses **known playbooks only**
-- Control plane must not be exposed to the public internet
-- Residual risk remains with the client’s broader controls
+See [docs/HARDENING.md](docs/HARDENING.md) and [docs/PILOT_SCOPE.md](docs/PILOT_SCOPE.md).
 
 ---
 
 ## License
 
-Authorized defensive use only — TrinTech Digital Defense. See [LICENSE](LICENSE).
-
-**Contact:** trintechdigitaldefense@gmail.com · +1 (868) 362-0679 · [github.com/trintechdigitaldefense](https://github.com/trintechdigitaldefense)
+Authorized defensive use only — TrinTech Digital Defense.  
+**Contact:** trintechdigitaldefense@gmail.com · +1 (868) 362-0679
