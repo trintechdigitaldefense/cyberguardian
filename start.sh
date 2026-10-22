@@ -25,6 +25,11 @@ pkill -f "uvicorn main:app" 2>/dev/null || true
 pkill -f "agents/linux-ebpf/agent.py" 2>/dev/null || true
 sleep 1
 
+# Assemble full API main.py from parts if needed (GitHub size workaround)
+if [ -f "$ROOT/control-plane/api/assemble_main.py" ]; then
+  python3 "$ROOT/control-plane/api/assemble_main.py" 2>/dev/null || true
+fi
+
 echo "Starting Decision Service (8001) on ${BIND_HOST}..."
 (cd "$ROOT/control-plane/decision-service" && python3 -m uvicorn main:app --host "$BIND_HOST" --port 8001 > /tmp/cg-decision.log 2>&1 &)
 sleep 1
