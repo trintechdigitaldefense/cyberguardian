@@ -1,0 +1,32 @@
+# Safe auto-remediate allowlist (Tier 2)
+# Only when Client Mode is OFF AND asset has a matching tag AND playbook is listed.
+# Production client assets should NOT be tagged lab/dev unless intentional.
+
+enabled: true
+
+# Asset tags that may receive auto-remediate without human gate
+allowed_asset_tags:
+  - lab
+  - dev
+  - staging
+  - dry-run
+
+# Playbook IDs allowed to auto-run on allowlisted assets
+allowed_playbooks:
+  - credential_theft
+  - ransomware
+  - c2_beacon
+
+# Actions that may auto-execute (still subject to agent privileges)
+allowed_actions:
+  - alert_only
+  - kill_process
+  - block_ip
+  # isolate_host deliberately omitted by default — too disruptive for auto
+
+# Hard deny: never auto on these tags even if also lab/dev
+deny_asset_tags:
+  - production
+  - prod
+  - client
+  - critical
