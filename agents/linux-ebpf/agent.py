@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""CyberGuardian Linux protective agent v1.2.0-tier1 — detect, queue, execute approved containment."""
+"""CyberGuardian Linux protective agent v1.4.0-tier3 — detect, queue, execute approved containment."""
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import socket
@@ -28,7 +30,7 @@ API = os.environ.get("CYBERGUARDIAN_API") or os.environ.get("CG_CONTROLLER_URL")
 KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or ""
 ASSET = os.environ.get("CYBERGUARDIAN_ASSET_ID") or f"linux-{socket.gethostname()}"
 TENANT = os.environ.get("CYBERGUARDIAN_TENANT") or "default"
-VERSION = "1.2.0-tier1"
+VERSION = "1.4.0-tier3"
 
 queue = OfflineQueue()
 baseline_names: set = set()
@@ -48,8 +50,7 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10):
     url = API.rstrip("/") + path
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        url,
-        data=data,
+        url, data=data,
         headers={"Content-Type": "application/json", "X-API-Key": KEY},
         method="POST",
     )
@@ -81,20 +82,53 @@ def cg_api_get(path: str, timeout: int = 10):
         return False, {}
 
 
+def _machine_id() -> str:
+    for p in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            return Path(p).read_text().strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _fingerprint(hostname: str, os_info: str, machine_id: str) -> str:
+    return hashlib.sha256(f"{hostname}|{os_info}|{machine_id}".encode()).hexdigest()[:32]
+
+
 def register():
+    hostname = socket.gethostname()
+    os_info = f"linux-{os.uname().release if hasattr(os, 'uname') else 'unknown'}"
+    mid = _machine_id()
+    fp = _fingerprint(hostname, os_info, mid)
+    ts = time.time()
+    secret = os.environ.get("CG_AGENT_IDENTITY_SECRET") or ""
+    sig = ""
+    if secret:
+        msg = f"{ASSET}|{fp}|{int(ts)}".encode()
+        sig = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+    tags = ["linux", "smart-agent", "containment", f"v{VERSION}"]
+    extra = os.environ.get("CYBERGUARDIAN_TAGS", "")
+    if extra:
+        tags.extend([t.strip() for t in extra.split(",") if t.strip()])
     ok, data = cg_api_post(
         "/v1/assets/register",
         {
             "asset_id": ASSET,
-            "hostname": socket.gethostname(),
+            "hostname": hostname,
             "asset_type": "endpoint",
-            "os": f"linux-{os.uname().release if hasattr(os, 'uname') else 'unknown'}",
-            "tags": ["linux", "smart-agent", "containment", f"v{VERSION}"],
+            "os": os_info,
+            "tags": tags,
             "agent_version": VERSION,
             "tenant_id": TENANT,
+            "machine_id": mid,
+            "fingerprint": fp,
+            "identity_ts": ts,
+            "identity_sig": sig,
         },
     )
     print("[agent] registered →", data.get("status") if isinstance(data, dict) else data)
+    if isinstance(data, dict) and data.get("identity_warning"):
+        print("[agent] identity warning:", data["identity_warning"])
     return ok
 
 
@@ -105,13 +139,7 @@ def list_processes():
             if not pid.isdigit():
                 continue
             try:
-                cmd = (
-                    Path(f"/proc/{pid}/cmdline")
-                    .read_bytes()
-                    .replace(b"\x00", b" ")
-                    .decode(errors="ignore")
-                    .strip()
-                )
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore").strip()
                 if not cmd:
                     cmd = Path(f"/proc/{pid}/comm").read_text(errors="ignore").strip()
                 procs.append({"pid": pid, "cmd": cmd})
@@ -123,7 +151,6 @@ def list_processes():
 
 
 def poll_and_execute_commands():
-    """Pull approved commands for this asset and run real containment."""
     ok, data = cg_api_get(f"/v1/agent/commands?asset_id={ASSET}")
     if not ok or not isinstance(data, dict):
         return
@@ -180,9 +207,7 @@ def scan_once():
                         "title": title,
                         "description": f"Matched indicator '{s}' in process",
                         "indicators": {"pid": p["pid"], "cmdline": p["cmd"][:200]},
-                        "tags": ["suspicious_process", "credential_access"]
-                        if "mimikatz" in s
-                        else ["suspicious_process"],
+                        "tags": ["suspicious_process", "credential_access"] if "mimikatz" in s else ["suspicious_process"],
                         "tenant_id": TENANT,
                     },
                 )
@@ -205,7 +230,7 @@ def scan_once():
 def main():
     ap = argparse.ArgumentParser(description="CyberGuardian Linux agent")
     ap.add_argument("--interval", type=int, default=60)
-    ap.add_argument("--once", action="store_true", help="Single scan + command poll then exit")
+    ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
     if not KEY:
         print("[agent] WARNING: CYBERGUARDIAN_API_KEY not set")
