@@ -1,22 +1,21 @@
-# Push status — CyberGuardian 1.4.0-tier3
+# Push status v1.5.1-strength
 
-**Date:** 2026-10-22
+## Blocker
 
-## Dashboard wiring — complete
+`control-plane/api/main.py` on GitHub may still be a thin loader (~1KB). Full gateway (~52KB) lives on the build machine / tarball.
 
-All operator UI actions proxy to the API:
+**Close gap:** from the machine that has the full tree:
 
-- Client Mode, Gate approve/reject, Mark benign, Undo isolate
-- Audit, Scorecard, Weekly digest, Fleet, Inventory, Hardening
+```bash
+git add control-plane/api/main.py
+git commit -m "v1.5.1: full API gateway main.py"
+git push origin main
+```
 
-## Gateway source
+## Do not push
 
-Full API is `control-plane/api/main.py.part1` + `main.py.part2`.
-`./start.sh` runs `assemble_main.py` before starting uvicorn.
+- `data/credentials.json` (passwords, API keys)
 
-Local workspace also keeps a complete `main.py` for development.
+## See also
 
-## On main branch
-
-Dashboard HTML + main.py ops, containment, allowlist, identity, sentinel,
-fp_feedback, HARDENING.md, pilot scripts, VERSION 1.4.0-tier3.
+- `docs/OPERATIONAL_NEXT.md`
