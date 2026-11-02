@@ -1,37 +1,54 @@
 name: CI
-
 on:
   push:
-    branches: [main]
+    branches: [main, "r2-*"]
   pull_request:
     branches: [main]
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest || true
-      - name: Compile Python sources
+          python -m pip install -U pip
+          pip install pytest fastapi uvicorn httpx pydantic jinja2 python-multipart
+          pip install -r requirements.txt 2>/dev/null || true
+          pip install -r control-plane/api/requirements.txt 2>/dev/null || true
+      - name: Assemble + verify gateway
         run: |
-          find . -name "*.py" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./dashboard/*" | while read f; do
-            python -m py_compile "$f" || exit 1
+          python control-plane/api/assemble_main.py
+          test -f control-plane/api/main_full.py
+          python -c "import ast; ast.parse(open('control-plane/api/main_full.py').read())"
+      - name: Unit tests
+        run: python -m pytest tests/ -q --tb=line
+      - name: Compile packages
+        run: |
+          python -m py_compile control-plane/api/main.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/command_crypto.py dashboard/main.py
+
+  docker-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -t cyberguardian-api:ci control-plane/api
+      - name: Start container smoke
+        run: |
+          docker run -d --name cg-api -p 18080:8080 cyberguardian-api:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || echo 000)
+            if [ "$code" = "200" ]; then echo healthy; exit 0; fi
+            sleep 1
           done
-      - name: Run pytest if tests exist
-        run: |
-          if [ -d tests ] || [ -d test ]; then
-            pytest -q
-          else
-            echo "No tests/ directory — compile-only check passed"
-          fi
+          docker logs cg-api || true
+          exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f cg-api || true
