@@ -1,28 +1,22 @@
-# API gateway packaging (P0)
+# Gateway packaging status
 
-## Source of truth
+## Preferred (complete source)
 
-Plain fragments (no compression):
-
-- `gw_src_00.txt` … `gw_src_12.txt`
-
-Assemble:
+Base64 parts under `gateway_b64/p000.b64` … + `decode_gateway_b64.py`:
 
 ```bash
-python3 control-plane/api/assemble_main.py   # writes main_full.py
+cd control-plane/api
+python3 decode_gateway_b64.py   # writes main_full.py
 ```
 
-Bootstrap `main.py` concatenates fragments at import if `main_full.py` is absent.
+Expected SHA256 of main_full.py:
+`39b8c5d94577bf8f317a485bf9a9ec84955249757b94395a1bc7ab3570dc0674`
 
-## Verify
+Also: plain `gw_src_*.txt` + `assemble_main.py` when all fragments are present.
 
-```bash
-python3 control-plane/api/assemble_main.py
-sha256sum control-plane/api/main_full.py
-# expect: 13ddc6fd897fcb519a79e2690d56616db737d1fb736e77bd32661d04818c38fe
-python3 scripts/ci_import_api.sh
-```
+Bootstrap `main.py` loads `main_full.py` or assembles from fragments.
 
-## Obsolete
+## Operator note
 
-Do not use `gateway_parts/*.z64` or `main_b64/`.
+If `decode_gateway_b64.py` fails with missing parts, copy from release tarball
+`cyberguardian-p0-gateway-src.tgz` or push remaining `gateway_b64/p*.b64` files.
