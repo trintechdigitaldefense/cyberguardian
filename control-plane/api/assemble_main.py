@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Assemble main.py from main.py.part* (GitHub size workaround)."""
+"""Assemble main_full.py from plain main_part*.py.txt. Fails if parts missing/corrupt."""
 from pathlib import Path
-here = Path(__file__).resolve().parent
-parts = sorted(here.glob("main.py.part*"))
-out = here / "main.py"
+ROOT = Path(__file__).resolve().parent
+parts = sorted(ROOT.glob("main_part*.py.txt"))
 if not parts:
-    print("no main.py.part* found — using existing main.py")
-    raise SystemExit(0)
-data = "".join(p.read_text() for p in parts)
-if not out.exists() or out.read_text() != data:
-    out.write_text(data)
-    print("assembled main.py", len(data), "bytes from", [p.name for p in parts])
-else:
-    print("main.py already matches parts", len(data))
+    raise SystemExit("ERROR: no main_part*.py.txt — cannot assemble API gateway")
+data = "".join(p.read_text(encoding="utf-8") for p in parts)
+if "CyberGuardian API Gateway" not in data[:400]:
+    raise SystemExit("ERROR: assembled content is not the API gateway")
+if len(data) < 20000:
+    raise SystemExit(f"ERROR: assembled size {len(data)} too small")
+out = ROOT / "main_full.py"
+out.write_text(data, encoding="utf-8")
+print(f"OK: wrote {out} ({len(data)} bytes) from {len(parts)} parts")

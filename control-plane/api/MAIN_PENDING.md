@@ -1,31 +1,17 @@
-# Full API gateway — push from your machine
+# API gateway packaging (updated)
 
-Automation cannot upload the complete ~52KB `main.py` via the Contents API without corruption.
+The full gateway source is split into plain-text parts (no compression):
 
-**Source of truth (local):**
+- `main_part0.py.txt`
+- `main_part1.py.txt`
+- `main_part2.py.txt`
 
-```
-/home/workdir/artifacts/CyberGuardian/control-plane/api/main.py
-```
-
-Or tarball: `artifacts/cyberguardian-api-main-1.5.1.tgz`
-
-## One command (closes the clone gap)
+On start, `main.py` concatenates these into `_assembled_main.py` (or uses `main_full.py` if present).
 
 ```bash
-cd /home/workdir/artifacts/CyberGuardian
-git add control-plane/api/main.py
-git commit -m "v1.5.1: full API gateway main.py"
-git push origin main
+python3 control-plane/api/assemble_main.py   # writes main_full.py
 ```
 
-After push, delete leftover junk if still present:
+Obsolete zlib `gateway_parts/*.z64` and `main_b64/` are deprecated — do not use.
 
-```bash
-git rm -f control-plane/api/gateway_parts/chunk*.z64 2>/dev/null
-git rm -rf control-plane/api/main_b64 2>/dev/null
-git commit -m "cleanup: remove failed upload fragments" || true
-git push
-```
-
-Until then: run from the local tree with `./start.sh` — local main.py is complete.
+Acceptance: clean clone + `python3 -c "from control_plane..."` or start API without external tarballs.

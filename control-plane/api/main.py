@@ -1,48 +1,35 @@
-"""CyberGuardian API Gateway — assembles from gateway_parts at import time."""
-from pathlib import Path
-import base64
+"""Bootstrap: assemble full gateway from main_part*.py.txt if needed, then load it."""
+from __future__ import annotations
 import importlib.util
 import sys
-import zlib
+from pathlib import Path
 
-_here = Path(__file__).resolve().parent
-_parts_dir = _here / "gateway_parts"
-_cache = _here / "_gateway_assembled.py"
+_ROOT = Path(__file__).resolve().parent
+_FULL = _ROOT / "_assembled_main.py"
+_PARTS = sorted(_ROOT.glob("main_part*.py.txt"))
 
+def _assemble() -> Path:
+    if not _PARTS:
+        raise RuntimeError(
+            "CyberGuardian API: main_part*.py.txt missing. "
+            "Repository is incomplete — restore full gateway source."
+        )
+    data = "".join(p.read_text(encoding="utf-8") for p in _PARTS)
+    if "CyberGuardian API Gateway" not in data[:400]:
+        raise RuntimeError("Assembled main.py does not look like the gateway")
+    _FULL.write_text(data, encoding="utf-8")
+    return _FULL
 
-def _load_parts() -> str:
-    plain = sorted(p for p in _parts_dir.glob("part*.py") if p.suffix == ".py")
-    if plain:
-        return "".join(p.read_text() for p in plain)
-    chunks = sorted(_parts_dir.glob("chunk*.z64"))
-    if chunks:
-        out = []
-        for p in chunks:
-            out.append(zlib.decompress(base64.b64decode(p.read_text().strip())))
-        return b"".join(out).decode()
-    z64 = sorted(_parts_dir.glob("part*.py.z64"))
-    if z64:
-        out = []
-        for p in z64:
-            out.append(zlib.decompress(base64.b64decode(p.read_text().strip())).decode())
-        return "".join(out)
-    raise RuntimeError("missing gateway_parts")
+_full_src = _ROOT / "main_full.py"
+if _full_src.exists() and _full_src.stat().st_size > 20000:
+    target = _full_src
+else:
+    target = _assemble()
 
-
-def _ensure():
-    data = _load_parts()
-    if not _cache.exists() or _cache.read_text() != data:
-        _cache.write_text(data)
-    return data
-
-
-_ensure()
-spec = importlib.util.spec_from_file_location("cyberguardian_gateway", _cache)
-mod = importlib.util.module_from_spec(spec)
-sys.modules["cyberguardian_gateway"] = mod
-spec.loader.exec_module(mod)
-app = mod.app
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+_spec = importlib.util.spec_from_file_location("cg_api_main", target)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"Cannot load {target}")
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules["cg_api_main"] = _mod
+_spec.loader.exec_module(_mod)
+app = _mod.app
