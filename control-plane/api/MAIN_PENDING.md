@@ -1,17 +1,28 @@
-# API gateway packaging (updated)
+# API gateway packaging (P0)
 
-The full gateway source is split into plain-text parts (no compression):
+## Source of truth
 
-- `main_part0.py.txt`
-- `main_part1.py.txt`
-- `main_part2.py.txt`
+Plain fragments (no compression):
 
-On start, `main.py` concatenates these into `_assembled_main.py` (or uses `main_full.py` if present).
+- `gw_src_00.txt` … `gw_src_12.txt`
+
+Assemble:
 
 ```bash
 python3 control-plane/api/assemble_main.py   # writes main_full.py
 ```
 
-Obsolete zlib `gateway_parts/*.z64` and `main_b64/` are deprecated — do not use.
+Bootstrap `main.py` concatenates fragments at import if `main_full.py` is absent.
 
-Acceptance: clean clone + `python3 -c "from control_plane..."` or start API without external tarballs.
+## Verify
+
+```bash
+python3 control-plane/api/assemble_main.py
+sha256sum control-plane/api/main_full.py
+# expect: 13ddc6fd897fcb519a79e2690d56616db737d1fb736e77bd32661d04818c38fe
+python3 scripts/ci_import_api.sh
+```
+
+## Obsolete
+
+Do not use `gateway_parts/*.z64` or `main_b64/`.

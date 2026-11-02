@@ -1,0 +1,3 @@
+13ddc6fd897fcb519a79e2690d56616db737d1fb736e77bd32661d04818c38fe  main_full.py
+# Assemble with: python3 control-plane/api/assemble_main.py
+# Expect size ~51553 bytes and sha256 above after concatenation of gw_src_00.txt .. gw_src_12.txt
