@@ -1,0 +1,101 @@
+        cid = queue_agent_command(
+            asset_id=asset_id,
+            action="block_ip",  # agent uses restore; for unblock we send restore_network primarily
+            target=str(ip),
+            parameters={"undo": True, "hint": "operator_unblock"},
+            reason=f"unblock {ip}",
+        )
+        # Prefer explicit restore only; block_ip with undo is a no-op unless agent handles it
+        extra.append(cid)
+    return {
+        "status": "queued",
+        "asset_id": asset_id,
+        "command_id": cmd_id,
+        "extra": extra,
+        "note": "Agent will run restore_network (nft/iptables cyberguardian table remove). Requires root on host.",
+    }
+
+
+@app.post("/v1/feedback/benign")
+async def mark_benign(payload: dict, x_api_key: str = Depends(require_admin)):
+    """Mark detection fingerprint as benign — suppress restaging for N days."""
+    title = payload.get("title") or ""
+    if not title:
+        raise HTTPException(400, "title required")
+    rec = _fp.mark_benign(
+        title=title,
+        asset_id=payload.get("asset_id") or "",
+        indicators=payload.get("indicators") or {},
+        tags=payload.get("tags") or [],
+        note=payload.get("note") or "",
+        actor="admin",
+        suppress_days=int(payload.get("suppress_days") or 14),
+        detection_id=payload.get("detection_id") or "",
+        pending_action_id=payload.get("pending_action_id") or "",
+    )
+    # If pending action id provided, reject it
+    pid = payload.get("pending_action_id")
+    if pid:
+        with db() as conn:
+            conn.execute(
+                "UPDATE pending_actions SET status='rejected', approved_at=? WHERE id=? AND status='pending'",
+                (time.time(), pid),
+            )
+        write_audit(
+            "rejected",
+            pending_action_id=pid,
+            action="",
+            target="",
+            asset_id=payload.get("asset_id") or "",
+            actor="admin",
+            detail="marked benign / false positive",
+            result_ok=0,
+        )
+    write_audit(
+        "false_positive",
+        action="mark_benign",
+        target=payload.get("asset_id") or "",
+        asset_id=payload.get("asset_id") or "",
+        actor="admin",
+        detail=rec.get("key"),
+        result_ok=1,
+    )
+    return {"status": "ok", "record": rec}
+
+
+@app.get("/v1/feedback")
+async def list_fp_feedback(x_api_key: str = Depends(require_api_key), limit: int = 50):
+    items = _fp.list_feedback(limit=limit)
+    return {"count": len(items), "items": items}
+
+
+@app.delete("/v1/feedback/{key}")
+async def clear_fp(key: str, x_api_key: str = Depends(require_admin)):
+    ok = _fp.clear_feedback(key)
+    if not ok:
+        raise HTTPException(404, "feedback key not found")
+    return {"status": "cleared", "key": key}
+
+
+@app.get("/v1/hardening")
+async def hardening_status(x_api_key: str = Depends(require_api_key)):
+    """Operator checklist / hardened posture summary."""
+    g = load_gate()
+    return {
+        "client_mode": bool(g.get("client_mode", True)),
+        "recommendations": [
+            "Keep Client Mode ON for client networks",
+            "Bind to 127.0.0.1 (CG_HARDENED=1) and use SSH tunnel or VPN",
+            "Do not expose 8080/3000/8001 to the public internet",
+            "Use agent key on endpoints only; admin key on operator machine",
+            "See docs/HARDENING.md",
+        ],
+        "allowlist_enabled": bool(_allowlist.load_allowlist().get("enabled", True)),
+        "sentinel": _sentinel.status_summary().get("bridge"),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8080)
