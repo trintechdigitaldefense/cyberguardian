@@ -1,45 +1,20 @@
 #!/usr/bin/env python3
-"""Assemble main_full.py — prefer gateway_hex (safe alphabet), then gateway_z."""
+"""Assemble main_full.py from gateway_hex (hex-encoded zlib)."""
 from pathlib import Path
-import base64, hashlib, sys, zlib
+import hashlib, sys, zlib
 
 ROOT = Path(__file__).resolve().parent
-EXPECTED_SHA = "09fb7d3bc9019aa4604a5b2d1b5df6f607b73d2e487332bddeebedf1547e9f80"
+EXPECTED_SHA = "39b8c5d94577bf8f317a485bf9a9ec84955249757b94395a1bc7ab3570dc0674"
 
-def from_hex():
-    root = ROOT / "gateway_hex"
-    parts = sorted(root.glob("[0-9][0-9].hex"))
-    if not parts:
-        parts = sorted(root.glob("c*.hex"))
-    if not parts:
-        allf = ROOT / "gateway_hex_all.hex"
-        if allf.exists():
-            return zlib.decompress(bytes.fromhex(allf.read_text().strip()))
-        return None
-    return zlib.decompress(bytes.fromhex("".join(p.read_text().strip() for p in parts)))
-
-def from_z():
-    parts = sorted((ROOT / "gateway_z").glob("*.txt"))
-    if not parts:
-        return None
-    return zlib.decompress(base64.b64decode("".join(p.read_text().strip() for p in parts)))
-
-def verify(data: bytes):
-    if b"CyberGuardian API Gateway" not in data[:400]:
-        raise SystemExit("ERROR: not gateway")
-    if hashlib.sha256(data).hexdigest() != EXPECTED_SHA:
-        raise SystemExit(f"ERROR: sha mismatch {hashlib.sha256(data).hexdigest()}")
-
-for name, fn in (("gateway_hex", from_hex), ("gateway_z", from_z)):
-    try:
-        data = fn()
-    except Exception as e:
-        print("skip", name, e)
-        continue
-    if not data:
-        continue
-    verify(data)
-    (ROOT / "main_full.py").write_bytes(data)
-    print(f"OK: {name} {len(data)} bytes")
-    sys.exit(0)
-raise SystemExit("ERROR: no valid gateway source")
+parts = sorted((ROOT / "gateway_hex").glob("*.hex"))
+if not parts:
+    raise SystemExit("ERROR: gateway_hex/*.hex missing")
+raw = bytes.fromhex("".join(p.read_text().strip() for p in parts))
+data = zlib.decompress(raw)
+if b"CyberGuardian API Gateway" not in data[:400]:
+    raise SystemExit("ERROR: not gateway content")
+actual = hashlib.sha256(data).hexdigest()
+if actual != EXPECTED_SHA:
+    raise SystemExit(f"ERROR: sha mismatch\n  expected {EXPECTED_SHA}\n  actual   {actual}")
+(ROOT / "main_full.py").write_bytes(data)
+print(f"OK: main_full.py ({len(data)} bytes) sha256={actual}")
