@@ -93,179 +93,58 @@ def require_admin(x_api_key: str = Depends(require_api_key)) -> str:
 def load_gate() -> dict:
     default = {
         "client_mode": True,
-        "auto_allow_known_playbooks": False,
+        "require_approval_for": ["isolate_host", "kill_process", "block_ip"],
+        "auto_alert_ok": True,
     }
     if GATE_CFG.exists():
         try:
-            data = json.loads(GATE_CFG.read_text())
-            default.update(data)
+            default.update(json.loads(GATE_CFG.read_text()))
         except Exception:
             pass
     return default
 
 
-def save_gate(cfg: dict) -> None:
-    GATE_CFG.write_text(json.dumps(cfg, indent=2))
+def save_gate(d: dict) -> dict:
+    d = dict(d)
+    d["updated_at"] = time.time()
+    GATE_CFG.write_text(json.dumps(d, indent=2))
+    try:
+        GATE_CFG.chmod(0o600)
+    except Exception:
+        pass
+    return d
 
 
-# ---------- database ----------
+# ---------- sqlite ----------
 
 @contextmanager
 def db():
-    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     try:
         yield conn
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
 
 
-def init_db() -> None:
+def init_db():
     with db() as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS assets (
                 asset_id TEXT PRIMARY KEY,
-                hostname TEXT,
                 tenant_id TEXT DEFAULT 'default',
-                tags TEXT,
-                last_seen REAL,
-                meta TEXT
-            );
-            CREATE TABLE IF NOT EXISTS pending_actions (
-                id TEXT PRIMARY KEY,
-                action TEXT,
-                target TEXT,
-                parameters TEXT,
-                reason TEXT,
-                decision_id TEXT,
-                detection_id TEXT,
-                created_at REAL,
-                status TEXT DEFAULT 'pending',
-                approved_at REAL
-            );
-            CREATE TABLE IF NOT EXISTS detections_log (
-                id TEXT PRIMARY KEY,
-                tenant_id TEXT,
-                asset_id TEXT,
-                title TEXT,
-                severity TEXT,
-                risk_score REAL,
-                payload TEXT,
-                created_at REAL
-            );
-            CREATE TABLE IF NOT EXISTS discovered_hosts (
-                host_key TEXT PRIMARY KEY,
-                ip TEXT,
                 hostname TEXT,
-                mac TEXT,
-                first_seen REAL,
+                asset_type TEXT DEFAULT 'endpoint',
+                os TEXT,
+                criticality TEXT DEFAULT 'medium',
+                tags TEXT DEFAULT '[]',
+                registered_at REAL,
                 last_seen REAL,
-                meta TEXT
-            );
-            CREATE TABLE IF NOT EXISTS agent_commands (
-                id TEXT PRIMARY KEY,
-                asset_id TEXT,
-                action TEXT,
-                target TEXT,
-                parameters TEXT,
-                reason TEXT,
-                pending_action_id TEXT,
-                decision_id TEXT,
-                detection_id TEXT,
-                status TEXT DEFAULT 'queued',
-                created_at REAL,
-                delivered_at REAL,
-                completed_at REAL,
-                result_ok INTEGER,
-                result_detail TEXT
-            );
-            CREATE TABLE IF NOT EXISTS action_audit (
-                id TEXT PRIMARY KEY,
-                pending_action_id TEXT,
-                command_id TEXT,
-                action TEXT,
-                target TEXT,
-                asset_id TEXT,
-                decision_id TEXT,
-                detection_id TEXT,
-                event TEXT,
-                actor TEXT,
-                detail TEXT,
-                result_ok INTEGER,
-                created_at REAL
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_commands_asset ON agent_commands(asset_id, status);
-            CREATE INDEX IF NOT EXISTS idx_action_audit_created ON action_audit(created_at DESC);
-            """
-        )
-
-
-@app.on_event("startup")
-def _startup():
-    init_db()
-    if not GATE_CFG.exists():
-        save_gate(load_gate())
-
-
-def _uptime():
-    secs = int(time.time() - SERVICE_STARTED_AT)
-    return secs, f"{secs // 60}m {secs % 60}s"
-
-
-
-def write_audit(
-    event: str,
-    *,
-    pending_action_id: str = "",
-    command_id: str = "",
-    action: str = "",
-    target: str = "",
-    asset_id: str = "",
-    decision_id: str = "",
-    detection_id: str = "",
-    actor: str = "system",
-    detail: str = "",
-    result_ok: int | None = None,
-) -> str:
-    aid = str(uuid.uuid4())
-    with db() as conn:
-        conn.execute(
-            """
-            INSERT INTO action_audit(
-                id, pending_action_id, command_id, action, target, asset_id,
-                decision_id, detection_id, event, actor, detail, result_ok, created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                aid,
-                pending_action_id,
-                command_id,
-                action,
-                target,
-                asset_id,
-                decision_id,
-                detection_id,
-                event,
-                actor,
-                detail,
-                result_ok,
-                time.time(),
-            ),
-        )
-    return aid
-
-
-def queue_agent_command(
-    *,
-    asset_id: str,
-    action: str,
-    target: str,
-    parameters: dict | None = None,
-    reason: str = "",
+                status TEXT DEFAULT 'online',
