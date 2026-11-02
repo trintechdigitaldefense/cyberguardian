@@ -7,8 +7,14 @@ ROOT = Path(__file__).resolve().parent
 EXPECTED_SHA = "09fb7d3bc9019aa4604a5b2d1b5df6f607b73d2e487332bddeebedf1547e9f80"
 
 def from_hex():
-    parts = sorted((ROOT / "gateway_hex").glob("*.hex"))
+    root = ROOT / "gateway_hex"
+    parts = sorted(root.glob("[0-9][0-9].hex"))
     if not parts:
+        parts = sorted(root.glob("c*.hex"))
+    if not parts:
+        allf = ROOT / "gateway_hex_all.hex"
+        if allf.exists():
+            return zlib.decompress(bytes.fromhex(allf.read_text().strip()))
         return None
     return zlib.decompress(bytes.fromhex("".join(p.read_text().strip() for p in parts)))
 
