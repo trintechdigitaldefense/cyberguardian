@@ -1,0 +1,62 @@
+            conn.execute(
+                "UPDATE pending_actions SET status='rejected', approved_at=? WHERE id=? AND status='pending'",
+                (time.time(), pid),
+            )
+        write_audit(
+            "rejected",
+            pending_action_id=pid,
+            action="",
+            target="",
+            asset_id=payload.get("asset_id") or "",
+            actor="admin",
+            detail="marked benign / false positive",
+            result_ok=0,
+        )
+    write_audit(
+        "false_positive",
+        action="mark_benign",
+        target=payload.get("asset_id") or "",
+        asset_id=payload.get("asset_id") or "",
+        actor="admin",
+        detail=rec.get("key"),
+        result_ok=1,
+    )
+    return {"status": "ok", "record": rec}
+
+
+@app.get("/v1/feedback")
+async def list_fp_feedback(x_api_key: str = Depends(require_api_key), limit: int = 50):
+    items = _fp.list_feedback(limit=limit)
+    return {"count": len(items), "items": items}
+
+
+@app.delete("/v1/feedback/{key}")
+async def clear_fp(key: str, x_api_key: str = Depends(require_admin)):
+    ok = _fp.clear_feedback(key)
+    if not ok:
+        raise HTTPException(404, "feedback key not found")
+    return {"status": "cleared", "key": key}
+
+
+@app.get("/v1/hardening")
+async def hardening_status(x_api_key: str = Depends(require_api_key)):
+    """Operator checklist / hardened posture summary."""
+    g = load_gate()
+    return {
+        "client_mode": bool(g.get("client_mode", True)),
+        "recommendations": [
+            "Keep Client Mode ON for client networks",
+            "Bind to 127.0.0.1 (CG_HARDENED=1) and use SSH tunnel or VPN",
+            "Do not expose 8080/3000/8001 to the public internet",
+            "Use agent key on endpoints only; admin key on operator machine",
+            "See docs/HARDENING.md",
+        ],
+        "allowlist_enabled": bool(_allowlist.load_allowlist().get("enabled", True)),
+        "sentinel": _sentinel.status_summary().get("bridge"),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8080)
