@@ -1,0 +1,271 @@
+"""
+CyberGuardian API Gateway v1.4.0-tier3
+Dual API keys, client mode, gate, real agent containment, audit trail, evidence, fleet, issues, inventory, reports.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+import issue_memory as _issue_mem
+import allowlist as _allowlist
+import agent_identity as _agent_id
+import sentinel_bridge as _sentinel
+import fp_feedback as _fp
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
+DATA.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA / "cyberguardian.db"
+CREDS_PATH = DATA / "credentials.json"
+GATE_CFG = DATA / "gate_config.json"
+SERVICE_STARTED_AT = time.time()
+
+DECISION_URL = os.getenv("DECISION_SERVICE_URL", "http://127.0.0.1:8001")
+
+app = FastAPI(title="CyberGuardian API", version="1.4.0-tier3", docs_url="/docs", redoc_url=None)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["*"],
+)
+
+# ---------- credentials / keys ----------
+
+def load_creds() -> dict:
+    if CREDS_PATH.exists():
+        try:
+            return json.loads(CREDS_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def admin_key() -> str:
+    c = load_creds()
+    return (c.get("api_key") or os.environ.get("CYBERGUARDIAN_API_KEY") or "").strip()
+
+
+def agent_key() -> str:
+    return (load_creds().get("agent_api_key") or "").strip()
+
+
+def valid_keys() -> set:
+    keys = set()
+    for k in (admin_key(), agent_key()):
+        if k:
+            keys.add(k)
+    return keys
+
+
+def is_admin(key: str) -> bool:
+    return bool(key) and key == admin_key() and key != ""
+
+
+def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> str:
+    if not x_api_key or x_api_key not in valid_keys():
+        raise HTTPException(401, "Invalid or missing API Key. Use header: X-API-Key")
+    return x_api_key
+
+
+def require_admin(x_api_key: str = Depends(require_api_key)) -> str:
+    if not is_admin(x_api_key):
+        raise HTTPException(401, "Admin API key required")
+    return x_api_key
+
+
+# ---------- gate config / client mode ----------
+
+def load_gate() -> dict:
+    default = {
+        "client_mode": True,
+        "auto_allow_known_playbooks": False,
+    }
+    if GATE_CFG.exists():
+        try:
+            data = json.loads(GATE_CFG.read_text())
+            default.update(data)
+        except Exception:
+            pass
+    return default
+
+
+def save_gate(cfg: dict) -> None:
+    GATE_CFG.write_text(json.dumps(cfg, indent=2))
+
+
+# ---------- database ----------
+
+@contextmanager
+def db():
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    with db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS assets (
+                asset_id TEXT PRIMARY KEY,
+                hostname TEXT,
+                tenant_id TEXT DEFAULT 'default',
+                tags TEXT,
+                last_seen REAL,
+                meta TEXT
+            );
+            CREATE TABLE IF NOT EXISTS pending_actions (
+                id TEXT PRIMARY KEY,
+                action TEXT,
+                target TEXT,
+                parameters TEXT,
+                reason TEXT,
+                decision_id TEXT,
+                detection_id TEXT,
+                created_at REAL,
+                status TEXT DEFAULT 'pending',
+                approved_at REAL
+            );
+            CREATE TABLE IF NOT EXISTS detections_log (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                asset_id TEXT,
+                title TEXT,
+                severity TEXT,
+                risk_score REAL,
+                payload TEXT,
+                created_at REAL
+            );
+            CREATE TABLE IF NOT EXISTS discovered_hosts (
+                host_key TEXT PRIMARY KEY,
+                ip TEXT,
+                hostname TEXT,
+                mac TEXT,
+                first_seen REAL,
+                last_seen REAL,
+                meta TEXT
+            );
+            CREATE TABLE IF NOT EXISTS agent_commands (
+                id TEXT PRIMARY KEY,
+                asset_id TEXT,
+                action TEXT,
+                target TEXT,
+                parameters TEXT,
+                reason TEXT,
+                pending_action_id TEXT,
+                decision_id TEXT,
+                detection_id TEXT,
+                status TEXT DEFAULT 'queued',
+                created_at REAL,
+                delivered_at REAL,
+                completed_at REAL,
+                result_ok INTEGER,
+                result_detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS action_audit (
+                id TEXT PRIMARY KEY,
+                pending_action_id TEXT,
+                command_id TEXT,
+                action TEXT,
+                target TEXT,
+                asset_id TEXT,
+                decision_id TEXT,
+                detection_id TEXT,
+                event TEXT,
+                actor TEXT,
+                detail TEXT,
+                result_ok INTEGER,
+                created_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_commands_asset ON agent_commands(asset_id, status);
+            CREATE INDEX IF NOT EXISTS idx_action_audit_created ON action_audit(created_at DESC);
+            """
+        )
+
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+    if not GATE_CFG.exists():
+        save_gate(load_gate())
+
+
+def _uptime():
+    secs = int(time.time() - SERVICE_STARTED_AT)
+    return secs, f"{secs // 60}m {secs % 60}s"
+
+
+
+def write_audit(
+    event: str,
+    *,
+    pending_action_id: str = "",
+    command_id: str = "",
+    action: str = "",
+    target: str = "",
+    asset_id: str = "",
+    decision_id: str = "",
+    detection_id: str = "",
+    actor: str = "system",
+    detail: str = "",
+    result_ok: int | None = None,
+) -> str:
+    aid = str(uuid.uuid4())
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO action_audit(
+                id, pending_action_id, command_id, action, target, asset_id,
+                decision_id, detection_id, event, actor, detail, result_ok, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                aid,
+                pending_action_id,
+                command_id,
+                action,
+                target,
+                asset_id,
+                decision_id,
+                detection_id,
+                event,
+                actor,
+                detail,
+                result_ok,
+                time.time(),
+            ),
+        )
+    return aid
+
+
+def queue_agent_command(
+    *,
+    asset_id: str,
+    action: str,
+    target: str,
+    parameters: dict | None = None,
+    reason: str = "",
