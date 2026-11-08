@@ -4,6 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
+**Latest R3 validation commit:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807`  
+**R3 CI evidence:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed; Python 3.10/3.11/3.12, Docker API smoke, and both containment integration jobs passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
@@ -82,12 +84,33 @@ R2 Linux acceptance is complete. The CI integration job runs the harness in disp
 
 Remaining environment-specific validation is part of R5: repeat the supervised checks on the actual supported Android/Termux-Ubuntu device/kernel profile, document pidfd/kernel availability, and confirm the device's firewall backend and privileges. Do not run destructive tests on a client or production host.
 
-### R3 — Complete operator and service security
+### R3 — Complete operator and service security (IN PROGRESS)
 
-- Add CSRF protection, login throttling, session revocation, secure cookie settings, role/tenant authorization, and operator attribution.
-- Replace wildcard credentialed CORS with explicit trusted origins.
-- Authenticate decision-service routes and restrict backend service exposure to private networks.
-- Use separate least-privilege service credentials and managed secrets; never commit credentials.
+**Latest validated branch commit:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807`  
+**CI:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed on Python 3.10/3.11/3.12; Docker API smoke and both containment integration jobs passed.
+
+Implemented and covered so far:
+- Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
+- Persistent SQLite sessions store only token hashes and support expiry and revocation.
+- Login CSRF token, state-changing POST logout, CSRF header validation, and login throttling across IP and account scopes.
+- Dashboard route role checks and tenant context propagation to gateway requests.
+- Secure/HttpOnly/SameSite cookies when production cookie mode is enabled; response security headers and no-store policy.
+- Decision-service rejects missing/incorrect internal service keys on /v1 routes and fails closed in production when the key is unset.
+- Gateway patch adds the internal decision-service credential to decision/execute requests and replaces wildcard credentialed CORS with configured explicit origins.
+- Compose keeps decision service on the private Docker network, binds API/dashboard host ports to localhost, and requires deployment secrets. A safe .env.example and deployment guidance are committed.
+- R3 tests now cover login/session/CSRF/role flows, service-key rejection, fail-closed configuration, CORS patch behaviour and source-drift failures.
+
+Still required before R3 can be marked complete:
+1. Add operator identity/actor attribution to gateway audit events for dashboard actions. The dashboard currently authenticates the operator locally but sends a shared gateway API key; audit records must preserve the authenticated username, role, tenant, action, approval and command correlation without trusting client-supplied actor headers.
+2. Enforce least privilege end-to-end. Define service identities/scopes for dashboard, NAD processor, API gateway and decision service; avoid giving dashboard a general admin API key. Add negative tests proving each service cannot call unrelated admin/agent endpoints.
+3. Audit every dashboard route and frontend action: ensure every state-changing operation requires CSRF and correct role, and every API proxy call carries the authenticated tenant. Add cross-tenant isolation tests, including object-ID substitution and audit/report endpoints.
+4. Review login throttling against reverse-proxy deployments. Trust forwarded client IP only from configured trusted proxies; add a global/account-only throttle resilient to rotating source IPs and a bounded cleanup/retention strategy for the attempts table.
+5. Harden browser policy: remove inline event handlers/scripts/styles where practical and remove `unsafe-inline` from CSP; test cookie Secure behaviour behind the documented TLS reverse proxy and confirm HSTS is only emitted for HTTPS deployments.
+6. Add production startup validation for missing/weak credentials, placeholder values, invalid CORS origins, insecure cookie settings, shared/default secrets and writable persistent storage. Do not silently fall back to development credentials in production.
+7. Add a full Compose integration test: fresh environment, all services healthy, dashboard login, invalid/expired/revoked session, CSRF denial, tenant-scoped API request, decision-service auth, and service-to-service failure when the secret is wrong.
+8. Confirm documentation accurately describes credential migration, secret generation, reverse-proxy/TLS requirements, backup/restore of the session DB and operator onboarding. Never commit real .env or credentials.
+
+Do not call R3 complete based on the current passing CI alone. The current evidence proves the listed automated tests and Docker API smoke, not full dashboard + decision-service deployment acceptance.
 
 ### R4 — Reliability, audit, and reporting integration
 
@@ -107,7 +130,7 @@ Remaining environment-specific validation is part of R5: repeat the supervised c
 
 ## Immediate work order
 
-R0, R1 and R2 code gates are complete on the security branch. The next engineering task is R3: complete dashboard and service authentication. Keep the security branch isolated from `main`; proceed through R3–R5 in order.
+R0, R1 and R2 code gates are complete on the security branch. R3 is underway: its first dashboard/service-auth controls and 62-test CI baseline are on the branch, but operator attribution, service least privilege, proxy-aware throttling, CSP hardening and full Compose acceptance remain. Continue R3 before starting R4. Keep the security branch isolated from `main`.
 
 ## GitHub delivery rules
 
