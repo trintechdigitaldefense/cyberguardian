@@ -53,3 +53,16 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f cg-api || true
+
+  containment-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated firewall test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iptables
+      - name: Exercise nftables in disposable network namespace
+        run: sudo python3 scripts/test_containment_namespace.py
+      - name: Exercise iptables fallback in disposable network namespace
+        run: sudo env CG_FORCE_IPTABLES=1 python3 scripts/test_containment_namespace.py
