@@ -54,6 +54,20 @@ def test_login_rate_limit_persists_and_expires(tmp_path, monkeypatch):
     assert not auth.is_rate_limited("192.0.2.4", "admin", now=250)
 
 
+
+def test_login_throttle_covers_ip_and_account_across_distinct_pairs(tmp_path, monkeypatch):
+    configure_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(auth, "MAX_LOGIN_FAILURES", 3)
+    monkeypatch.setattr(auth, "LOGIN_WINDOW_SECONDS", 1000)
+    for index in range(15):
+        auth.record_login_attempt("192.0.2.50", f"unknown-{index}", False, now=100 + index)
+    assert auth.is_rate_limited("192.0.2.50", "another-username", now=120)
+
+    configure_store(tmp_path / "account-scope", monkeypatch)
+    for index in range(12):
+        auth.record_login_attempt(f"198.51.100.{index + 1}", "admin", False, now=200 + index)
+    assert auth.is_rate_limited("203.0.113.99", "admin", now=220)
+
 def test_hashed_credentials_authenticate_in_production(tmp_path, monkeypatch):
     configure_store(tmp_path, monkeypatch)
     monkeypatch.setattr(auth, "PRODUCTION", True)
