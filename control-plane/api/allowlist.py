@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from runtime_paths import DATA_DIR, CONFIG_DIR
 from typing import Any, Dict, List, Set
 
-ROOT = Path(__file__).resolve().parents[2]
-CFG_PATH = ROOT / "configs" / "auto_allowlist.yaml"
-DATA_OVERRIDE = ROOT / "data" / "auto_allowlist.json"
+CFG_PATH = CONFIG_DIR / "auto_allowlist.yaml"
+DATA_OVERRIDE = DATA_DIR / "auto_allowlist.json"
 
 
 def _parse_simple_yaml(text: str) -> dict:
