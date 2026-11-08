@@ -94,8 +94,13 @@ def test_playbook_disruptive_actions_require_human_approval_by_default():
 def test_playbook_auto_action_requires_explicit_allowlist_reference():
     decision = _load_decision()
     decision.PROTECTION_MODE = True
-    step = decision.PLAYBOOKS["credential_theft"]["steps"][1]
-    step["allowlist_id"] = "customer-approved-allowlist-1"
+    sys.path.insert(0, str(DECISION_DIR))
+    try:
+        import playbooks
+        step = playbooks.PLAYBOOKS["credential_theft"]["steps"][1]
+        step["allowlist_id"] = "customer-approved-allowlist-1"
+    finally:
+        sys.path.remove(str(DECISION_DIR))
     detection = decision.Detection(
         asset_id="host-1",
         severity=decision.Severity.CRITICAL,
