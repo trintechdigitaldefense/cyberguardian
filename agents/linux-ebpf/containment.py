@@ -373,6 +373,12 @@ def block_ip(ip: str) -> Dict[str, Any]:
     return result
 
 
+def _clear_iptables_isolation() -> None:
+    for tool in ("iptables", "ip6tables"):
+        if shutil.which(tool) is not None and _run([tool, "-S", IPT_ISOLATE], timeout=5)[0] == 0:
+            _run([tool, "-F", IPT_ISOLATE], timeout=5)
+
+
 def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "action": "isolate_host", "target": "self", "ok": False, "detail": "", "ts": time.time(), "reversible": True
@@ -388,9 +394,25 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
 
     if ISOLATE_MARKER.exists():
         marker = _read_json(ISOLATE_MARKER, {})
-        if marker.get("status") == "active":
-            result.update(ok=True, detail="already isolated; active marker present", backend=marker.get("backend"))
-            return result
+        backend = marker.get("backend")
+        if marker.get("status") == "active" and backend == "nft" and _has_nft() and _nft_exists("table", NFT_FAMILY, NFT_TABLE):
+            listing = _nft_chain(NFT_ISOLATE)
+            if "drop" in listing and all(str(addr) in listing for addr in controller_ips):
+                result.update(ok=True, detail="already isolated; firewall state verified", backend=backend)
+                return result
+        if marker.get("status") == "active" and backend == "iptables+ip6tables":
+            verified = True
+            for version, address in ((ip.version, ip) for ip in controller_ips):
+                tool = _iptables_tool(version)
+                rules = _iptables_chain_rules(tool, IPT_ISOLATE) if tool else ""
+                if not tool or "-j DROP" not in rules or f"-d {address} -j ACCEPT" not in rules:
+                    verified = False
+                    break
+            if verified:
+                result.update(ok=True, detail="already isolated; dual-stack firewall state verified", backend=backend)
+                return result
+        # A stale marker is not proof of isolation. Reapply from observed state.
+        ISOLATE_MARKER.unlink(missing_ok=True)
 
     applied: List[str] = []
     if _has_nft():
@@ -432,6 +454,7 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
             return result
         for tool in (tools[4], tools[6]):
             if not _iptables_ensure(tool):
+                _clear_iptables_isolation()
                 result["detail"] = f"failed to create CyberGuardian-owned chains with {tool}"
                 return result
         allow_rules = [
@@ -443,19 +466,23 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
         for tool in (tools[4], tools[6]):
             for rule in allow_rules:
                 if not _iptables_add_once(tool, IPT_ISOLATE, rule):
+                    _clear_iptables_isolation()
                     result["detail"] = f"failed to add isolation allow rule with {tool}"
                     return result
         for address in controller_ips:
             tool = tools[address.version]
             if not _iptables_add_once(tool, IPT_ISOLATE, ["-d", str(address), "-j", "ACCEPT"]):
+                _clear_iptables_isolation()
                 result["detail"] = f"failed to add controller recovery allow rule for {address}"
                 return result
             applied.append(f"allow controller {address}")
         for tool in (tools[4], tools[6]):
             if not _iptables_add_once(tool, IPT_ISOLATE, ["-j", "DROP"]):
+                _clear_iptables_isolation()
                 result["detail"] = f"failed to add isolation drop rule with {tool}"
                 return result
             if "-j DROP" not in _iptables_chain_rules(tool, IPT_ISOLATE):
+                _clear_iptables_isolation()
                 result["detail"] = f"isolation drop verification failed with {tool}"
                 return result
         applied.append("scoped dual-stack iptables isolation")
