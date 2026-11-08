@@ -51,7 +51,8 @@ def active_agent_api_keys() -> set[str]:
 
 
 def write_agent_credentials(agents: Dict[str, Dict[str, Any]]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    DATA_DIR.chmod(0o700)
     payload = json.dumps({"agents": agents}, indent=2, sort_keys=True)
     fd, name = tempfile.mkstemp(prefix=".agent_credentials.", dir=str(DATA_DIR))
     try:
