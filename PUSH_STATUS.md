@@ -1,58 +1,58 @@
 # CyberGuardian R2 push and verification status
 
 **Branch:** `r2-1.6.0-security`  
-**R0 validated code commit:** `3a2f9a393f4e86789823035bbaab0cec430449ca`  
-**CI evidence:** [run 42510671312](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42510671312)  
-**Status:** R0 passed; R1 is next.
+**R0 code commit:** `3a2f9a393f4e86789823035bbaab0cec430449ca`  
+**R1 code commit:** `786b6283562ddd98b601142e33c4624a13a85b50`  
+**Latest verified CI:** [run 42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408)  
+**Status:** R0 and R1 code/CI gates passed; R2 is next.
 
-## GitHub delivery inventory
+## R0 — Gateway and Docker
 
-The following are tracked on this branch:
+- Canonical source: `control-plane/api/gateway_z/00.txt`–`05.txt`.
+- Original source SHA-256: `39b8c5d94577bf8f317a485bf9a9ec84955249757b94395a1bc7ab3570dc0674`.
+- Deterministic gateway patch fixes command-poll SQLite audit transaction ordering.
+- Final assembled gateway: 54,118 bytes.
+- Final SHA-256: `6d6a7bac74729a5e2bc8b8dc39c5a73f8c98611f8b2cdc32b12acc6ea00f2c20`.
+- Docker build and container `/health` smoke passed.
 
-- Linux agent, containment engine, offline queue and command crypto module
-- API agent identity module and gateway source/assembler
-- Decision service and dashboard
-- Startup, status and stop scripts
-- Credential setup script
-- CI workflow and regression tests
+## R1 — Signed commands and agent identity
 
-Presence on GitHub is not equivalent to security acceptance. The R1-R4 items remain open as described in `docs/ROADMAP.md`.
+- Agent verifies command HMAC before execution; signature binds command ID, tenant, asset, action, target, full parameters, expiry, approval reference and nonce.
+- Durable SQLite replay ledger prevents re-use of command IDs/nonces.
+- Controller signs command responses using the enrolled agent's dedicated command secret.
+- Per-agent API key and identity-secret enrollment, rotation and revocation are implemented.
+- API middleware binds agent credentials to one asset and tenant and limits keys to agent endpoints.
+- Registration and heartbeat use signed per-agent identity.
+- Command-poll audit writes occur after the command transaction commits.
 
-## R0 evidence
-
-- Canonical gateway source: `control-plane/api/gateway_z/00.txt` through `05.txt`.
-- Restored R2's corrupted `05.txt` from the verified `main` version.
-- Assembled gateway: 53,731 bytes.
-- SHA-256: `39b8c5d94577bf8f317a485bf9a9ec84955249757b94395a1bc7ab3570dc0674`.
-- Assembler verifies all six chunk names, strict base64 decoding, zlib decompression, UTF-8, gateway marker, Python AST, SHA-256 and expected byte size; it writes output atomically.
-- Runtime data/config paths are portable between repository and container layouts.
-- Docker working directory preserves the repository-relative paths expected by the gateway.
-
-## CI results — run 42510671312
+### Latest CI run 42511953408
 
 - Python 3.10: passed
 - Python 3.11: passed
 - Python 3.12: passed
-- Automated tests: 4 passed in 0.08 seconds (Python 3.12 log)
-- Application compile checks: passed
+- Automated tests: 12 passed
+- Compile checks: passed
 - Docker image build: passed
-- Container `/health` smoke test: passed
-
-This is a successful R0 CI gate. It is not a full integration test, security assessment, or ten-minute soak test.
+- Container `/health`: passed
 
 ## Current test inventory
 
 - `tests/test_command_crypto.py`
+- `tests/test_agent_security.py`
+- `tests/test_agent_api_integration.py`
+- `tests/test_agent_enrollment.py`
 - `tests/test_gateway_assembly.py`
 
-Four test functions currently pass. Expand the suite with R1-R4 acceptance tests; do not overstate coverage.
+These are focused regression and integration tests, not a full platform security assessment.
 
-## Next: R1
+## Next: R2 — Containment and rollback
 
-1. Call `verify_command` on every received command before invoking containment.
-2. Reject unsigned commands in production, and require valid expiry, asset/tenant binding, approval reference and nonce.
-3. Add durable replay protection.
-4. Use unique per-agent credentials with enrollment, rotation and revocation.
-5. Add negative tests for missing/bad signatures, expiry, replay, wrong tenant, wrong asset and altered parameters.
+1. Verify PID plus process-start-time identity before any process action.
+2. Reject process-hint mismatches and validate targets with strict parsers.
+3. Use CyberGuardian-owned firewall chains only; never flush unrelated host rules.
+4. Validate IPv4 and IPv6 paths and controller recovery exceptions.
+5. Make restore verify the actual firewall state before reporting success.
+6. Test destructive paths only in disposable VMs/mocks.
+7. Add failure-injection and rollback integration tests.
 
-Do not merge to `main` until R1-R5 and release acceptance are complete.
+Do not merge to `main` or deploy to a client network until R2-R5 acceptance and pilot gates pass.
