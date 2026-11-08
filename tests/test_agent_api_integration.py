@@ -101,3 +101,10 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             headers=headers,
         )
         assert wrong_asset.status_code == 403
+
+        # An agent key cannot be reused as a general API key to read fleet or
+        # operator configuration belonging to another tenant.
+        fleet_read = client.get("/v1/assets?tenant_id=tenant-b", headers=headers)
+        assert fleet_read.status_code == 403
+        admin_read = client.get("/v1/client-mode", headers=headers)
+        assert admin_read.status_code == 403
