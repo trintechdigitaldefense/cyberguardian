@@ -3,6 +3,8 @@ CyberGuardian Decision Service v1.5.0-tier1 — risk scoring + playbooks + evide
 """
 from __future__ import annotations
 
+import hmac
+import os
 import time
 import uuid
 import logging
@@ -10,7 +12,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from playbooks import match_playbook
@@ -18,7 +21,30 @@ from playbooks import match_playbook
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decision-service")
 
-app = FastAPI(title="CyberGuardian Decision Service", version="1.5.0-tier1")
+PRODUCTION = os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+SERVICE_KEY = os.getenv("DECISION_SERVICE_API_KEY", "").strip()
+app = FastAPI(
+    title="CyberGuardian Decision Service",
+    version="1.5.0-tier1",
+    docs_url=None if PRODUCTION else "/docs",
+    redoc_url=None,
+    openapi_url=None if PRODUCTION else "/openapi.json",
+)
+
+
+@app.middleware("http")
+async def require_internal_service_auth(request: Request, call_next):
+    if not request.url.path.startswith("/v1/"):
+        return await call_next(request)
+    if not SERVICE_KEY:
+        if PRODUCTION:
+            return JSONResponse({"detail": "decision-service authentication is not configured"}, status_code=503)
+        return await call_next(request)
+    supplied = request.headers.get("X-Decision-Service-Key", "")
+    if not hmac.compare_digest(supplied, SERVICE_KEY):
+        return JSONResponse({"detail": "invalid or missing service credential"}, status_code=401)
+    return await call_next(request)
+
 
 PROTECTION_MODE = True  # enforce staged/executed actions when approved
 
