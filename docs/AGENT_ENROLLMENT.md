@@ -1,0 +1,91 @@
+# CyberGuardian per-agent enrollment and command signing
+
+This procedure provisions one dedicated API key, identity HMAC secret, and command-signing HMAC secret per enrolled asset. Run enrollment only on the controller host. Never commit the generated credentials or paste them into source control, tickets, or chat.
+
+## 1. Prepare the controller
+
+Set these environment variables in the controller service environment:
+
+```sh
+CG_PRODUCTION=1
+CG_REQUIRE_AGENT_IDENTITY=1
+CG_DATA_DIR=/var/lib/cyberguardian
+```
+
+Use a persistent, access-controlled data directory. Ensure the controller service account owns it and restrict access to the service account. Keep the admin API key separate from every agent key.
+
+Restart the API after setting the production variables. In production, an agent without an active per-agent enrollment record is rejected.
+
+## 2. Enroll an asset
+
+On the controller host, run:
+
+```sh
+python3 scripts/enroll_agent.py --asset-id linux-server-01 --tenant-id customer-a
+```
+
+The script stores the agent's API key, identity secret, command-signing secret, tenant and active status in:
+
+```text
+$CG_DATA_DIR/agent_credentials.json
+```
+
+The file is written atomically with mode 0600. The script prints the agent environment values once. Transfer them to the device through your approved secret-delivery process.
+
+## 3. Configure the agent
+
+Create a protected environment file on the enrolled Linux device, for example:
+
+```sh
+sudo install -d -m 0700 /etc/cyberguardian
+sudo install -m 0600 /dev/null /etc/cyberguardian/agent.env
+sudoedit /etc/cyberguardian/agent.env
+```
+
+Set the controller URL and all values printed by the enrollment script:
+
+- `CYBERGUARDIAN_API` (or `CG_CONTROLLER_URL`)
+- `CYBERGUARDIAN_API_KEY`
+- `CYBERGUARDIAN_ASSET_ID`
+- `CYBERGUARDIAN_TENANT`
+- `CG_AGENT_IDENTITY_SECRET`
+- `CG_COMMAND_SIGNING_SECRET`
+- `CG_REQUIRE_AGENT_IDENTITY=1`
+- `CG_REQUIRE_COMMAND_SIG=1`
+
+Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
+
+## 4. Verify enrollment
+
+- Start the agent and confirm registration succeeds.
+- Confirm the asset appears under the expected tenant.
+- Confirm command polling succeeds with the enrolled API key.
+- Confirm an issued command has a valid signature, matching asset and tenant, an expiry, a unique nonce and (for disruptive actions) an approval reference.
+- Confirm the agent rejects missing/bad signatures, expired commands, wrong-asset/tenant commands, and replayed command IDs/nonces.
+- Confirm a revoked key can no longer register, poll commands or report command results.
+
+## 5. Rotate or revoke
+
+Rotate all three per-agent secrets:
+
+```sh
+python3 scripts/enroll_agent.py --asset-id linux-server-01 --tenant-id customer-a --rotate
+```
+
+Securely replace the values in the agent's environment file and restart that agent. The previous credentials are replaced in the controller's active record.
+
+Revoke an asset:
+
+```sh
+python3 scripts/enroll_agent.py --asset-id linux-server-01 --revoke
+```
+
+Revocation changes the record status to revoked. The controller rejects the old API key and does not sign further commands for that asset.
+
+## Safety notes
+
+- Keep `$CG_DATA_DIR/agent_credentials.json` out of Git and backups that are accessible to ordinary users.
+- Back up the credential store only through an encrypted, access-controlled process.
+- A credential rotation should be coordinated with the device operator to avoid an unintended monitoring outage.
+- Do not enable production mode until all intended agents have active per-agent records and their environment files are securely provisioned.
+- Disruptive actions remain human-approved. Signing proves command authenticity and integrity; it does not replace authorization, approval, or operator review.
