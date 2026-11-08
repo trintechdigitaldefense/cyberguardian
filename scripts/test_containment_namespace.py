@@ -68,6 +68,31 @@ def inside_namespace() -> int:
         fail("CG_FORCE_IPTABLES=1 requires both iptables and ip6tables")
     if force_iptables:
         c._has_nft = lambda: False
+        for tool in ("iptables", "ip6tables"):
+            if c._run([tool, "-N", "CG_TEST_KEEP"], timeout=5)[0] != 0:
+                fail(f"could not create unrelated preservation chain with {tool}")
+            if c._run([tool, "-A", "CG_TEST_KEEP", "-j", "ACCEPT"], timeout=5)[0] != 0:
+                fail(f"could not add unrelated preservation rule with {tool}")
+            if c._run([tool, "-I", "OUTPUT", "1", "-j", "CG_TEST_KEEP"], timeout=5)[0] != 0:
+                fail(f"could not attach unrelated preservation chain with {tool}")
+    else:
+        # Prove the agent refuses a pre-existing same-named table it does not own.
+        if c._run(["nft", "add", "table", c.NFT_FAMILY, c.NFT_TABLE], timeout=5)[0] != 0:
+            fail("could not create unowned nftables collision fixture")
+        if c._run(["nft", "add", "chain", c.NFT_FAMILY, c.NFT_TABLE, "foreign"], timeout=5)[0] != 0:
+            fail("could not create unowned nftables chain fixture")
+        if c._nft_ensure():
+            fail("agent adopted an unowned same-named nftables table")
+        if c._nft_owner_verified():
+            fail("unowned nftables table passed ownership verification")
+        if c._run(["nft", "delete", "table", c.NFT_FAMILY, c.NFT_TABLE], timeout=5)[0] != 0:
+            fail("could not remove unowned nftables collision fixture")
+        if c._run(["nft", "add", "table", c.NFT_FAMILY, "cg_test_unrelated"], timeout=5)[0] != 0:
+            fail("could not create unrelated nftables preservation table")
+        if c._run(["nft", "add", "chain", c.NFT_FAMILY, "cg_test_unrelated", "keep"], timeout=5)[0] != 0:
+            fail("could not create unrelated nftables preservation chain")
+        if c._run(["nft", "add", "rule", c.NFT_FAMILY, "cg_test_unrelated", "keep", "counter", "accept"], timeout=5)[0] != 0:
+            fail("could not add unrelated nftables preservation rule")
 
     c._resolve_controller_ips = lambda _hint: [
         c.ipaddress.ip_address(CTRL_V4),
@@ -145,7 +170,18 @@ def inside_namespace() -> int:
         ):
             if shutil.which(tool) and subprocess.run([tool, "-S", chain], capture_output=True).returncode == 0:
                 fail(f"{tool} chain {chain} remains after restore")
-        print("PASS verified rollback and marker cleanup")
+        if force_iptables:
+            for tool in ("iptables", "ip6tables"):
+                if not c._iptables_rule_exists(tool, "OUTPUT", ["-j", "CG_TEST_KEEP"]):
+                    fail(f"{tool} unrelated OUTPUT jump was removed during restore")
+                if not c._iptables_rule_exists(tool, "CG_TEST_KEEP", ["-j", "ACCEPT"]):
+                    fail(f"{tool} unrelated preservation rule was removed during restore")
+        else:
+            if not c._nft_exists("table", c.NFT_FAMILY, "cg_test_unrelated"):
+                fail("unrelated nftables table was removed during CyberGuardian restore")
+            if "counter accept" not in c._run(["nft", "-a", "list", "chain", c.NFT_FAMILY, "cg_test_unrelated", "keep"], timeout=5)[1]:
+                fail("unrelated nftables rule was removed during CyberGuardian restore")
+        print("PASS unrelated firewall rules and chains preserved")
 
         # Inject a failure at the final isolation DROP rule. The implementation
         # must remove partially-applied isolation rules and keep a pending marker
