@@ -10,7 +10,9 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "control-plane" / "api"
+AGENT = ROOT / "agents" / "linux-ebpf"
 sys.path.insert(0, str(API))
+sys.path.insert(0, str(AGENT))
 
 
 def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, monkeypatch):
