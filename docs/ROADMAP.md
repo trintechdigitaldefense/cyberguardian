@@ -4,19 +4,19 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Current hardening branch head at review:** 3a2f9a393f4e86789823035bbaab0cec430449ca
+**Current hardening branch head at review:** 786b6283562ddd98b601142e33c4624a13a85b50
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
 ## Executive status
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
-- r2-1.6.0-security is 29 commits ahead of main, with no commits behind it.
+- r2-1.6.0-security is 64 commits ahead of main, with no commits behind it.
 - R2 contains gateway assembly/checksum logic, a Docker assembly step, command-signature code, and a small unit-test addition.
-- Do not merge R2 into main yet. R0 has passed on code commit `3a2f9a3`: Python 3.10/3.11/3.12, gateway assembly, four automated tests, compilation, Docker build, and container `/health` smoke all passed in Actions run [42510671312](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42510671312).
+- Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are now confirmed tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
-- R2's changelog says the product is not production-ready until signed-command verification, remaining authentication hardening, and Docker smoke testing are complete.
+- R2-R5 remain open. The product is not production-ready; dashboard/service authentication, containment, queue reliability, audit/reporting and supervised pilot acceptance still need completion.
 
 ## Original eight phases
 
@@ -35,24 +35,33 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 This is a cross-cutting gate, not a replacement for the eight product phases.
 
-### R0 — Recover and stabilise the R2 branch (COMPLETED)
+### R0 — Gateway and Docker build (COMPLETED)
 
-1. Reproduce the latest R2 CI failure locally and in GitHub Actions.
-2. Fix gateway packaging so committed source fragments, assembler, and expected SHA-256 all refer to the same exact gateway artifact. Remove stale or competing chunk formats from the active build path.
-3. Ensure all required gateway chunks are tracked on the branch. The current PUSH_STATUS.md lists only a partial gateway_hex set and says other required files remain in local build trees.
-4. Push the complete, reviewed implementations of containment, dashboard, offline queue, identity, decision service, startup/status/stop scripts, and tests. Never claim a local-only file has been delivered.
-5. Make CI fail closed: no ignored dependency-install failures, no skipped tests presented as success, and run assembly, pytest, compile, Docker build, and container health smoke.
-6. Re-run CI on the resulting commit and record the exact commit SHA and all job outcomes.
+**Verified code commit:** `3a2f9a393f4e86789823035bbaab0cec430449ca`  
+**CI evidence:** [run 42510671312](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42510671312)
 
-R0 is complete only when the exact branch head has green required checks, gateway assembly is reproducible from a fresh clone, and the Docker container reaches healthy status.
+- Restored the corrupted final `gateway_z/05.txt` fragment from the verified `main` version.
+- Made the six-part `gateway_z` source canonical; added strict chunk, decompression, syntax, checksum and size validation.
+- Added portable runtime paths and corrected Docker's working directory.
+- Made dependency installation fail closed and added gateway regression tests.
+- Python 3.10/3.11/3.12 passed; four tests passed; compile, Docker build and container health smoke passed.
 
-### R1 — Complete command and identity security
+### R1 — Signed commands and agent identity (COMPLETED)
 
-- Require signed command envelopes in production; no unsigned fallback when CG_PRODUCTION=1.
-- Bind signature to command ID, tenant, asset, action, parameters, approval reference, nonce, and expiry.
-- Persist replay protection and reject expired, duplicated, altered, wrong-tenant, and wrong-asset commands.
-- Use dedicated per-agent credentials; prohibit admin credentials on endpoints.
-- Add key rotation and revocation tests.
+**Verified code commit:** `786b6283562ddd98b601142e33c4624a13a85b50`  
+**CI evidence:** [run 42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408)
+
+- Agent verifies signed command envelopes before execution and rejects invalid signatures, expired commands, weak/missing nonces, wrong asset/tenant and unapproved disruptive actions.
+- Controller signs commands with per-agent command secrets and binds the signature to command ID, tenant, asset, action, target, full parameters, approval reference, nonce and expiry.
+- Agent persists consumed command IDs/nonces in a SQLite replay ledger.
+- Per-agent API keys, identity secrets and command secrets are provisioned by `scripts/enroll_agent.py`; rotation and revocation are supported.
+- API middleware scopes agent credentials to their enrolled asset/tenant and agent-only endpoints; admin/fleet endpoints are rejected.
+- Registration and heartbeat use signed per-agent identity.
+- Fixed command-poll SQLite audit locking by writing audit events after the command transaction commits.
+- Added tests for command signing, replay, enrollment, rotation, revocation, tenant isolation, command delivery and result reporting.
+- Python 3.10/3.11/3.12 passed; 12 tests passed; compile checks, Docker build and container health smoke passed.
+
+R1 code and automated acceptance tests are complete. Real device provisioning and field verification remain part of R5 pilot acceptance.
 
 ### R2 — Complete containment and recovery safety
 
@@ -85,7 +94,7 @@ R0 is complete only when the exact branch head has green required checks, gatewa
 
 ## Immediate work order
 
-The next engineering task is R1: wire signed command verification into the agent before execution, make production verification fail closed, and complete per-agent identity, tenant/asset binding, expiry, replay protection, rotation and revocation tests. Keep R2 isolated from `main`; proceed through R1–R5 in order.
+The next engineering task is R2: complete containment and rollback safety validation. Keep the security branch isolated from `main`; proceed through R2–R5 in order.
 
 ## GitHub delivery rules
 
