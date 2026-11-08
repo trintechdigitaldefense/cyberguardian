@@ -108,3 +108,24 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         assert fleet_read.status_code == 403
         admin_read = client.get("/v1/client-mode", headers=headers)
         assert admin_read.status_code == 403
+
+        reported = client.post(
+            "/v1/agent/command-result",
+            headers=headers,
+            json={
+                "command_id": command["id"],
+                "asset_id": "host-a",
+                "action": command["action"],
+                "target": command["target"],
+                "ok": True,
+                "detail": "integration-test-complete",
+                "result": {"test": True},
+            },
+        )
+        assert reported.status_code == 200, reported.text
+
+        revoked_record = dict(record)
+        revoked_record["status"] = "revoked"
+        agent_credentials.write_agent_credentials({"host-a": revoked_record})
+        revoked_poll = client.get("/v1/agent/commands?asset_id=host-a", headers=headers)
+        assert revoked_poll.status_code == 403
