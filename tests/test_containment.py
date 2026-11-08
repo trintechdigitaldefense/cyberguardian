@@ -166,3 +166,56 @@ def test_execute_command_passes_starttime_to_process_guard(monkeypatch):
     })
     assert result["ok"]
     assert captured == {"pid": "321", "hint": "worker.py", "starttime": "456"}
+
+
+def test_nft_isolation_does_not_allow_general_dns_or_established_egress(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    controller = ipaddress.ip_address("192.0.2.10")
+    monkeypatch.setattr(c, "_resolve_controller_ips", lambda hint: [controller])
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_nft_ensure", lambda: True)
+    commands = []
+    monkeypatch.setattr(c, "_nft_add_once", lambda chain, expr: commands.append((chain, expr)) or True)
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: "ip daddr 192.0.2.10 accept\\ndrop")
+    monkeypatch.setattr(c, "_write_json_atomic", lambda path, value: None)
+    result = c.isolate_host("https://controller.example:8080")
+    assert result["ok"], result
+    rendered = [" ".join(expr) for _, expr in commands]
+    assert not any("dport 53" in rule for rule in rendered)
+    assert not any("ct state established" in rule for rule in rendered)
+
+
+def test_iptables_fallback_requires_and_configures_both_families(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    v4 = ipaddress.ip_address("192.0.2.10")
+    v6 = ipaddress.ip_address("2001:4860::1")
+    monkeypatch.setattr(c, "_resolve_controller_ips", lambda hint: [v4, v6])
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: False)
+    monkeypatch.setattr(c.shutil, "which", lambda tool: f"/sbin/{tool}" if tool in ("iptables", "ip6tables") else None)
+    monkeypatch.setattr(c, "_iptables_ensure", lambda tool: True)
+    monkeypatch.setattr(c, "_write_json_atomic", lambda path, value: None)
+    calls = []
+    monkeypatch.setattr(c, "_iptables_add_once", lambda tool, chain, args: calls.append((tool, chain, args)) or True)
+    monkeypatch.setattr(c, "_iptables_chain_rules", lambda tool, chain: "-j DROP")
+    result = c.isolate_host("https://controller.example:8080")
+    assert result["ok"], result
+    assert ("iptables", c.IPT_ISOLATE, ["-d", "192.0.2.10", "-j", "ACCEPT"]) in calls
+    assert ("ip6tables", c.IPT_ISOLATE, ["-d", "2001:4860::1", "-j", "ACCEPT"]) in calls
+    assert ("iptables", c.IPT_ISOLATE, ["-j", "DROP"]) in calls
+    assert ("ip6tables", c.IPT_ISOLATE, ["-j", "DROP"]) in calls
+
+
+def test_restore_retains_marker_if_recorded_backend_is_missing(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    c.ISOLATE_MARKER.write_text(json.dumps({"status": "active", "backend": "nft"}))
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: False)
+    monkeypatch.setattr(c, "_has_iptables", lambda: False)
+    monkeypatch.setattr(c, "_has_ip6tables", lambda: False)
+    monkeypatch.setattr(c.shutil, "which", lambda tool: None)
+    result = c.restore_network()
+    assert not result["ok"]
+    assert "backend unavailable" in result["detail"]
+    assert c.ISOLATE_MARKER.exists()
