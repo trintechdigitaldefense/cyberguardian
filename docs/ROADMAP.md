@@ -4,17 +4,17 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Current hardening branch head at review:** a33dd96b3af675cb36d42d95bea6a972b210a909
+**Current hardening branch head at review:** 3a2f9a393f4e86789823035bbaab0cec430449ca
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
 ## Executive status
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
-- r2-1.6.0-security is 12 commits ahead of main, with no commits behind it.
+- r2-1.6.0-security is 29 commits ahead of main, with no commits behind it.
 - R2 contains gateway assembly/checksum logic, a Docker assembly step, command-signature code, and a small unit-test addition.
-- Do not merge R2 into main yet. The latest Actions run for R2 (41546472755, commit a33dd96) failed. Python jobs failed at gateway assembly; the Docker image build also failed. Unit tests and later compile steps were skipped.
-- R2 PUSH_STATUS.md explicitly says important implementation files remain only in local build trees and are not yet on GitHub. Do not count local-only changes as delivered.
+- Do not merge R2 into main yet. R0 has passed on code commit `3a2f9a3`: Python 3.10/3.11/3.12, gateway assembly, four automated tests, compilation, Docker build, and container `/health` smoke all passed in Actions run [42510671312](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42510671312).
+- Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are now confirmed tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
 - R2's changelog says the product is not production-ready until signed-command verification, remaining authentication hardening, and Docker smoke testing are complete.
 
@@ -35,7 +35,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 This is a cross-cutting gate, not a replacement for the eight product phases.
 
-### R0 — Recover and stabilise the R2 branch (NEXT)
+### R0 — Recover and stabilise the R2 branch (<escape>COMPLETED</escape>)
 
 1. Reproduce the latest R2 CI failure locally and in GitHub Actions.
 2. Fix gateway packaging so committed source fragments, assembler, and expected SHA-256 all refer to the same exact gateway artifact. Remove stale or competing chunk formats from the active build path.
@@ -85,7 +85,7 @@ R0 is complete only when the exact branch head has green required checks, gatewa
 
 ## Immediate work order
 
-The next engineering task is R0, not new feature development. Fix the failed gateway assembly and Docker build on r2-1.6.0-security, restore/push the missing source files identified in PUSH_STATUS.md, then run the full CI suite. Only after R0 is green should the team proceed through R1–R5 and open a merge-ready PR to main.
+The next engineering task is R1: wire signed command verification into the agent before execution, make production verification fail closed, and complete per-agent identity, tenant/asset binding, expiry, replay protection, rotation and revocation tests. Keep R2 isolated from `main`; proceed through R1–R5 in order.
 
 ## GitHub delivery rules
 
