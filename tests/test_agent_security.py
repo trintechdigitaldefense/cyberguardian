@@ -54,6 +54,22 @@ def test_controller_refuses_unapproved_disruptive_command():
         raise AssertionError("disruptive command without approval was signed")
 
 
+
+def test_allowlisted_disruptive_command_has_auditable_approval_reference():
+    queued = {
+        "id": "cmd-allowlisted",
+        "asset_id": "host-a",
+        "action": "block_ip",
+        "target": "192.0.2.10",
+        "decision_id": "decision-123",
+        "reason": "approved by scoped auto allowlist",
+        "parameters": {"ip": "192.0.2.10", "_expires_at": time.time() + 300},
+    }
+    signed = sign_envelope(queued, tenant_id="tenant-a", secret="secret")
+    assert signed["approval_ref"] == "allowlist:decision-123"
+    ok, reason = verify_command(signed, "secret")
+    assert ok, reason
+
 def test_per_agent_identity_is_bound_to_active_enrollment(tmp_path, monkeypatch):
     store = tmp_path / "agent_credentials.json"
     store.write_text(json.dumps({
