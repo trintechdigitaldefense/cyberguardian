@@ -147,6 +147,11 @@ def test_nft_rule_verification_rejects_address_prefix_collision(monkeypatch):
     assert not c._nft_rule_present(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.1", "drop"])
     assert c._nft_rule_present(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.10", "drop"])
 
+
+def test_nft_rule_verification_normalizes_quoted_interface_names(monkeypatch):
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: 'oifname "lo" accept # handle 4')
+    assert c._nft_rule_present(c.NFT_ISOLATE, ["oifname", "lo", "accept"])
+
 def test_nft_rule_is_not_success_until_rule_is_visible(monkeypatch):
     monkeypatch.setattr(c, "_nft_chain", lambda chain: "")
     monkeypatch.setattr(c, "_run", lambda args, timeout=8: (0, "", ""))
