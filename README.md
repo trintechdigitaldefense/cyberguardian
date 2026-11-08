@@ -14,7 +14,7 @@ Detect → Decide → **Approve** → Contain → Audit.
 
 | Service | Port | Role |
 |---------|------|------|
-| Decision Service | 8001 | Risk scoring, playbooks, evidence |
+| Decision Service | Internal 8001 | Risk scoring, playbooks, evidence; no host-published port in Compose |
 | API Gateway | 8080 | Gate, command queue, audit, allowlist, identity, FP feedback |
 | Dashboard | **3000** | Operator UI (fully proxied to API) |
 | Linux Agent | — | Detect, poll commands, real containment |
@@ -44,7 +44,7 @@ Agent --(agent key)--> API /v1/detections
 | Weekly digest | `GET /v1/reports/weekly` |
 | Fleet + inventory | `GET /v1/fleet`, `/v1/inventory/report` |
 
-Dashboard proxies (session required): `/ops/client-mode`, `/ops/gate/*`, `/ops/audit`, `/ops/scorecard`, `/ops/weekly`, `/ops/rollback/{id}`, `/ops/feedback/benign`, `/ops/fleet`, `/ops/hardening`.
+Dashboard proxies (session required): `/ops/client-mode`, `/ops/gate/*`, `/ops/audit`, `/ops/scorecard`, `/ops/weekly`, `/ops/rollback/{id}`, `/ops/feedback/benign`, `/ops/fleet`, `/ops/hardening`. Dashboard sessions are persistent and expiring; passwords are PBKDF2-hashed; login throttling, CSRF checks, role checks, and tenant propagation are enabled.
 
 ---
 
@@ -68,6 +68,24 @@ export CG_HARDENED=1
 | http://127.0.0.1:8080/health | API |
 
 SSH tunnel if remote: `ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 user@host`
+
+## Hardened Docker Compose deployment
+
+Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash and the API keys into the ignored `data/credentials.json` file. Then create a private `deploy/docker/.env` file:
+
+```bash
+CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
+DECISION_SERVICE_API_KEY=$(openssl rand -hex 32)
+CG_PRODUCTION=1
+CG_REQUIRE_AGENT_IDENTITY=1
+CG_COOKIE_SECURE=1
+CG_ALLOWED_ORIGINS=https://your-dashboard.example
+CG_DATA_HOST_DIR=../../data
+```
+
+Keep the decision-service key secret and never commit `.env`. The same `DECISION_SERVICE_API_KEY` is injected into the API gateway and decision service. Compose publishes the dashboard and API only on loopback; the decision service is reachable only on the private Compose network. For remote access, use an SSH tunnel or a TLS reverse proxy and set `CG_ALLOWED_ORIGINS` to the exact HTTPS dashboard origin.
+
+See [docs/HARDENING.md](docs/HARDENING.md) for the full production configuration and [docs/ROADMAP.md](docs/ROADMAP.md) for phase status.
 
 > **Note:** On first start, `assemble_main.py` rebuilds `control-plane/api/main.py` from `main.py.part1` + `main.py.part2` if needed (GitHub file-size workaround).
 
