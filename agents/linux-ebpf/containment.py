@@ -368,14 +368,18 @@ def _iptables_ensure(tool: str) -> bool:
     return True
 
 
+def _iptables_rule_exists(tool: str, chain: str, args: List[str]) -> bool:
+    # -C asks the firewall backend to compare semantic rules; -S may normalize
+    # host addresses to /32 or /128 and make exact string checks fail.
+    return _run([tool, "-C", chain, *args], timeout=5)[0] == 0
+
+
 def _iptables_add_once(tool: str, chain: str, args: List[str]) -> bool:
-    rules = _iptables_chain_rules(tool, chain)
-    line = f"-A {chain} " + " ".join(args)
-    if line in rules:
+    if _iptables_rule_exists(tool, chain, args):
         return True
     if _run([tool, "-A", chain, *args], timeout=5)[0] != 0:
         return False
-    return line in _iptables_chain_rules(tool, chain)
+    return _iptables_rule_exists(tool, chain, args)
 
 
 def _record_block(address: ipaddress._BaseAddress, backend: str, status: str = "active") -> None:
@@ -472,8 +476,11 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
             verified = True
             for version, address in ((ip.version, ip) for ip in controller_ips):
                 tool = _iptables_tool(version)
-                rules = _iptables_chain_rules(tool, IPT_ISOLATE) if tool else ""
-                if not tool or "-j DROP" not in rules or f"-d {address} -j ACCEPT" not in rules:
+                if (
+                    not tool
+                    or not _iptables_rule_exists(tool, IPT_ISOLATE, ["-d", str(address), "-j", "ACCEPT"])
+                    or not _iptables_rule_exists(tool, IPT_ISOLATE, ["-j", "DROP"])
+                ):
                     verified = False
                     break
             if verified:
@@ -584,7 +591,7 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
                 _clear_iptables_isolation()
                 result["detail"] = f"failed to add isolation drop rule with {tool}"
                 return result
-            if "-j DROP" not in _iptables_chain_rules(tool, IPT_ISOLATE):
+            if not _iptables_rule_exists(tool, IPT_ISOLATE, ["-j", "DROP"]):
                 _clear_iptables_isolation()
                 result["detail"] = f"isolation drop verification failed with {tool}"
                 return result
