@@ -6,12 +6,10 @@ import json
 import time
 import uuid
 from pathlib import Path
+from runtime_paths import DATA_DIR
 from typing import Any, Dict, List, Optional
 
-# __file__ = .../CyberGuardian/control-plane/api/issue_memory.py → parents[2] = repo root
-STORE = Path(__file__).resolve().parents[2] / "data" / "issue_memory.jsonl"
-if not STORE.parent.exists():
-    STORE = Path("/tmp/cyberguardian_issue_memory.jsonl")
+STORE = DATA_DIR / "issue_memory.jsonl"
 
 
 def _read_all() -> List[Dict[str, Any]]:
