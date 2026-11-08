@@ -3,12 +3,13 @@ on:
   push:
     branches: [main, "r2-*"]
   pull_request:
-    branches: [main]
+    branches: [main, "r2-*"]
 
 jobs:
   python:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
@@ -16,35 +17,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install deps
+      - name: Install project and test dependencies
         run: |
-          python -m pip install -U pip
-          pip install pytest fastapi uvicorn httpx pydantic jinja2 python-multipart
-          pip install -r requirements.txt 2>/dev/null || true
-          pip install -r control-plane/api/requirements.txt 2>/dev/null || true
-      - name: Assemble + verify gateway
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r dashboard/requirements.txt -r control-plane/decision-service/requirements.txt pytest
+      - name: Assemble and verify canonical gateway
         run: |
           python control-plane/api/assemble_main.py
-          test -f control-plane/api/main_full.py
-          python -c "import ast; ast.parse(open('control-plane/api/main_full.py').read())"
-      - name: Unit tests
-        run: python -m pytest tests/ -q --tb=line
-      - name: Compile packages
+          test -s control-plane/api/main_full.py
+      - name: Run automated tests
+        run: python -m pytest tests/ -q --tb=short
+      - name: Compile application modules
         run: |
-          python -m py_compile control-plane/api/main.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/command_crypto.py dashboard/main.py
+          python -m py_compile control-plane/api/main.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py dashboard/main.py
 
   docker-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build API image
-        run: docker build -t cyberguardian-api:ci control-plane/api
-      - name: Start container smoke
+        run: docker build --pull -t cyberguardian-api:ci control-plane/api
+      - name: Start container smoke test
         run: |
           docker run -d --name cg-api -p 18080:8080 cyberguardian-api:ci
           for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || echo 000)
-            if [ "$code" = "200" ]; then echo healthy; exit 0; fi
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || true)
+            if [ "$code" = "200" ]; then
+              echo "API health check passed"
+              exit 0
+            fi
             sleep 1
           done
           docker logs cg-api || true
