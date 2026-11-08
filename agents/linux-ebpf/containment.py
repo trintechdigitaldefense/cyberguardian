@@ -539,6 +539,22 @@ def restore_network() -> Dict[str, Any]:
         return result
 
     failures = []
+    isolation_record = _read_json(ISOLATE_MARKER, {})
+    block_record = _read_json(BLOCK_MARKER, {"ips": {}})
+    recorded_backends = {str(isolation_record.get("backend") or "")}
+    recorded_backends.update(
+        str(item.get("backend") or "")
+        for item in (block_record.get("ips") or {}).values()
+        if isinstance(item, dict)
+    )
+    if "nft" in recorded_backends and not _has_nft():
+        failures.append("nftables backend unavailable; cannot verify or restore recorded nft rules")
+    if "iptables" in recorded_backends and not _has_iptables():
+        failures.append("iptables backend unavailable; cannot verify or restore recorded IPv4 rules")
+    if "ip6tables" in recorded_backends and not _has_ip6tables():
+        failures.append("ip6tables backend unavailable; cannot verify or restore recorded IPv6 rules")
+    if "iptables+ip6tables" in recorded_backends and (not _has_iptables() or not _has_ip6tables()):
+        failures.append("dual-stack iptables backend incomplete; cannot verify full restore")
     if _has_nft() and _nft_exists("table", NFT_FAMILY, NFT_TABLE):
         rc, out, err = _run(["nft", "delete", "table", NFT_FAMILY, NFT_TABLE], timeout=8)
         if rc != 0 or _nft_exists("table", NFT_FAMILY, NFT_TABLE):
