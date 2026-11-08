@@ -75,7 +75,7 @@ Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash and
 
 ```bash
 CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
-DECISION_SERVICE_API_KEY=$(openssl rand -hex 32)
+DECISION_SERVICE_API_KEY=<paste-the-output-of-openssl-rand-hex-32>
 CG_PRODUCTION=1
 CG_REQUIRE_AGENT_IDENTITY=1
 CG_COOKIE_SECURE=1
