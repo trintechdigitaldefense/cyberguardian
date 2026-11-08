@@ -44,7 +44,7 @@ def test_gateway_decision_service_patch_fails_on_source_drift():
     try:
         patch_decision_auth('DECISION_URL = "http://localhost"')
     except ValueError as exc:
-        assert "decision endpoint call anchor" in str(exc)
+        assert "decision-service URL anchor" in str(exc)
     else:
         raise AssertionError("patch must fail closed when gateway source drifts")
 
@@ -107,7 +107,16 @@ def test_decision_service_fails_closed_when_production_key_missing(monkeypatch):
 
 def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     from starlette.requests import Request
-    import main as dashboard
+    sys.path.insert(0, str(DASHBOARD_DIR))
+    try:
+        dashboard_spec = importlib.util.spec_from_file_location(
+            "cg_dashboard_r3_auth_test_module", DASHBOARD_DIR / "main.py"
+        )
+        dashboard = importlib.util.module_from_spec(dashboard_spec)
+        sys.modules[dashboard_spec.name] = dashboard
+        dashboard_spec.loader.exec_module(dashboard)
+    finally:
+        sys.path.remove(str(DASHBOARD_DIR))
 
     monkeypatch.setattr(dashboard.dashboard_auth, "AUTH_DB", tmp_path / "auth.sqlite3")
     monkeypatch.setattr(dashboard.dashboard_auth, "DATA_DIR", tmp_path)
@@ -115,13 +124,16 @@ def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     monkeypatch.setattr(dashboard, "SESSION_COOKIE", "test_session")
     monkeypatch.setattr(dashboard, "CSRF_COOKIE", "test_csrf")
 
-    def request(method, cookies):
+    def request(method, cookies, csrf_header=None):
         cookie = "; ".join(f"{key}={value}" for key, value in cookies.items()).encode()
+        headers = [(b"cookie", cookie)]
+        if csrf_header:
+            headers.append((b"x-csrf-token", csrf_header.encode()))
         scope = {
             "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
             "method": method, "scheme": "http", "path": "/ops/client-mode",
             "raw_path": b"/ops/client-mode", "query_string": b"",
-            "headers": [(b"cookie", cookie)],
+            "headers": headers,
             "client": ("127.0.0.1", 12345), "server": ("test", 80),
         }
         return Request(scope)
@@ -129,13 +141,13 @@ def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     admin = {"username": "admin", "tenant_id": "tenant-7", "role": "admin"}
     token, csrf, _ = dashboard.dashboard_auth.create_session(admin)
     assert dashboard._require_sess(request("POST", {"test_session": token})) .status_code == 403
-    assert dashboard._require_sess(request("POST", {"test_session": token, "test_csrf": csrf})) is None
+    assert dashboard._require_sess(request("POST", {"test_session": token, "test_csrf": csrf}, csrf_header=csrf)) is None
     assert dashboard.tenant_for_request(request("GET", {"test_session": token})) == "tenant-7"
     assert dashboard.headers("tenant-7")["X-Tenant-ID"] == "tenant-7"
 
     viewer = {"username": "viewer", "tenant_id": "tenant-8", "role": "viewer"}
     viewer_token, viewer_csrf, _ = dashboard.dashboard_auth.create_session(viewer)
     denied = dashboard._require_sess(
-        request("POST", {"test_session": viewer_token, "test_csrf": viewer_csrf})
+        request("POST", {"test_session": viewer_token, "test_csrf": viewer_csrf}, csrf_header=viewer_csrf)
     )
     assert denied.status_code == 403
