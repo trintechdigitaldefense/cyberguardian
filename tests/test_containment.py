@@ -52,6 +52,15 @@ def test_kill_process_rejects_pid_reuse_starttime(monkeypatch):
     assert "PID reuse" in result["detail"]
 
 
+
+def test_kill_process_refuses_unreadable_proc_identity(monkeypatch):
+    def unreadable(pid):
+        raise PermissionError("procfs denied")
+    monkeypatch.setattr(c, "_proc_identity", unreadable)
+    result = c.kill_process("2345", expected_starttime="123")
+    assert not result["ok"]
+    assert "unable to verify process identity" in result["detail"]
+
 def test_kill_process_uses_pidfd_bound_to_same_starttime(monkeypatch):
     calls = []
     snapshots = [
