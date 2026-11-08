@@ -161,8 +161,35 @@ def test_nft_existing_rule_is_detected_with_normalized_format(monkeypatch):
 
 def test_nft_ensure_rejects_foreign_or_wrong_hook_base_chain(monkeypatch):
     monkeypatch.setattr(c, "_nft_exists", lambda kind, *names: True)
+    monkeypatch.setattr(c, "_nft_owner_verified", lambda: True)
     monkeypatch.setattr(c, "_nft_chain", lambda chain: "type filter hook input priority 0; policy accept;")
     assert not c._nft_ensure()
+
+
+def test_nft_ensure_refuses_existing_unowned_table(monkeypatch):
+    monkeypatch.setattr(c, "_nft_exists", lambda kind, *names: True)
+    monkeypatch.setattr(c, "_nft_owner_verified", lambda: False)
+    monkeypatch.setattr(c, "_run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not adopt unowned table")))
+    assert not c._nft_ensure()
+
+
+def test_restore_refuses_to_delete_unowned_nft_table(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    c.ISOLATE_MARKER.write_text(json.dumps({"status": "active", "backend": "nft"}))
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_nft_exists", lambda kind, *names: True)
+    monkeypatch.setattr(c, "_nft_owner_verified", lambda: False)
+    monkeypatch.setattr(c, "_has_iptables", lambda: False)
+    monkeypatch.setattr(c, "_has_ip6tables", lambda: False)
+    monkeypatch.setattr(c.shutil, "which", lambda tool: None)
+    calls = []
+    monkeypatch.setattr(c, "_run", lambda args, timeout=8: calls.append(args) or (0, "", ""))
+    result = c.restore_network()
+    assert not result["ok"]
+    assert "without CyberGuardian ownership marker" in result["detail"]
+    assert not any(args[:3] == ["nft", "delete", "table"] for args in calls)
+    assert c.ISOLATE_MARKER.exists()
 
 def test_restore_without_root_retains_markers(monkeypatch, tmp_path):
     _state_paths(tmp_path, monkeypatch)
@@ -184,6 +211,7 @@ def test_restore_deletes_only_cyberguardian_nft_table(monkeypatch, tmp_path):
     def exists(kind, *names):
         return state["exists"]
     monkeypatch.setattr(c, "_nft_exists", exists)
+    monkeypatch.setattr(c, "_nft_owner_verified", lambda: True)
     commands = []
     def run(args, timeout=8):
         commands.append(args)
