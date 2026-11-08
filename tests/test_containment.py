@@ -132,6 +132,7 @@ def test_restore_deletes_only_cyberguardian_nft_table(monkeypatch, tmp_path):
     c.BLOCK_MARKER.write_text("{}")
     monkeypatch.setattr(c, "_is_root", lambda: True)
     monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c.shutil, "which", lambda tool: None if tool in ("iptables", "ip6tables") else "/usr/sbin/nft")
     state = {"exists": True}
     def exists(kind, *names):
         return state["exists"]
