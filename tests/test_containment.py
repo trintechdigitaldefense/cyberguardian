@@ -127,6 +127,15 @@ def test_nft_isolation_has_controller_allow_and_final_drop(monkeypatch, tmp_path
 
 
 
+
+def test_nft_rule_verification_rejects_address_prefix_collision(monkeypatch):
+    monkeypatch.setattr(
+        c, "_nft_chain",
+        lambda chain: "ip daddr 192.0.2.10 drop # handle 12",
+    )
+    assert not c._nft_rule_present(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.1", "drop"])
+    assert c._nft_rule_present(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.10", "drop"])
+
 def test_nft_rule_is_not_success_until_rule_is_visible(monkeypatch):
     monkeypatch.setattr(c, "_nft_chain", lambda chain: "")
     monkeypatch.setattr(c, "_run", lambda args, timeout=8: (0, "", ""))
