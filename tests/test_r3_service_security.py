@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -146,6 +148,37 @@ def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     assert dashboard._require_sess(request("POST", {"test_session": token, "test_csrf": csrf}, csrf_header=csrf)) is None
     assert dashboard.tenant_for_request(request("GET", {"test_session": token})) == "tenant-7"
     assert dashboard.headers("tenant-7")["X-Tenant-ID"] == "tenant-7"
+
+    from fastapi.testclient import TestClient
+    login_password = "dashboard admin password 123"
+    dashboard.dashboard_auth.CREDS_PATH = tmp_path / "credentials.json"
+    dashboard.dashboard_auth.CREDS_PATH.write_text(json.dumps({
+        "admin_user": "admin",
+        "admin_password_hash": dashboard.dashboard_auth.hash_password(login_password),
+    }))
+    client = TestClient(dashboard.app, follow_redirects=False)
+    login_page = client.get("/login")
+    assert login_page.status_code == 200
+    assert login_page.headers.get("cache-control") == "no-store"
+    login_token = re.search(r'name="login_csrf" value="([^"]+)"', login_page.text).group(1)
+    invalid_login = client.post(
+        "/login",
+        data={"username": "admin", "password": login_password, "login_csrf": "wrong"},
+    )
+    assert invalid_login.status_code == 403
+    successful_login = client.post(
+        "/login",
+        data={"username": "admin", "password": login_password, "login_csrf": login_token},
+    )
+    assert successful_login.status_code == 303
+    session_token = client.cookies.get(dashboard.SESSION_COOKIE)
+    csrf_token = client.cookies.get(dashboard.CSRF_COOKIE)
+    assert dashboard.dashboard_auth.get_session(session_token)
+    logout_without_csrf = client.post("/logout")
+    assert logout_without_csrf.status_code == 403
+    logout = client.post("/logout", headers={"X-CSRF-Token": csrf_token})
+    assert logout.status_code == 303
+    assert dashboard.dashboard_auth.get_session(session_token) is None
 
     viewer = {"username": "viewer", "tenant_id": "tenant-8", "role": "viewer"}
     viewer_token, viewer_csrf, _ = dashboard.dashboard_auth.create_session(viewer)
