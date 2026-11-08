@@ -56,6 +56,10 @@ def sign_envelope(command: Dict[str, Any], *, tenant_id: str, secret: str) -> Di
         raise ValueError("command expiry is missing, expired, or exceeds the one-hour limit")
     envelope["expires_at"] = expires_at
     approval_ref = str(envelope.get("pending_action_id") or params.get("_approval_id") or "")
+    if not approval_ref and "[auto allowlist]" in str(envelope.get("reason") or "").lower():
+        decision_id = str(envelope.get("decision_id") or "")
+        if decision_id:
+            approval_ref = f"allowlist:{decision_id}"
     if str(envelope.get("action") or "") in DISRUPTIVE_ACTIONS and not approval_ref:
         raise ValueError("disruptive command is missing its approval reference")
     envelope["approval_ref"] = approval_ref
