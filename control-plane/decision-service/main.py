@@ -79,7 +79,9 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
         for step in pb["steps"]:
             auto = bool(step.get("auto")) and PROTECTION_MODE
             disruptive = step["action"] in {"kill_process", "block_ip", "isolate_host"}
-            auto_allowed = auto and (not disruptive or bool(step.get("allowlist_id")))
+            # A playbook field is not an authorization grant. Until a tenant-scoped,
+            # authenticated allowlist service exists, disruptive actions stay human-gated.
+            auto_allowed = auto and not disruptive
             target = det.asset_id
             if step["action"] == "kill_process":
                 target = pid or det.asset_id
@@ -89,11 +91,10 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                 ActionRequest(
                     action=ActionType(step["action"]),
                     target=target,
-                    reason=(step.get("desc", "") + (" [auto allowlist]" if disruptive and auto_allowed else "")),
+                    reason=step.get("desc", "") + (" [human approval required]" if disruptive else ""),
                     auto_approved=auto_allowed and step["action"] != "escalate",
                     parameters={
                         "playbook": pb["id"],
-                        **({"allowlist_id": str(step["allowlist_id"])} if disruptive and auto_allowed and step.get("allowlist_id") else {}),
                         **({"cmdline_hint": cmdline_hint} if step["action"] == "kill_process" and cmdline_hint else {}),
                         **({"expected_starttime": expected_starttime} if step["action"] == "kill_process" and expected_starttime else {}),
                     },
