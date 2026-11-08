@@ -4,7 +4,7 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Current hardening branch head at review:** d1ec90dd5840a3f310f01cae1d0080c9c9a1940d
+**Latest R2 code commit with passing CI:** 4801175d1024a081383077c867d1a07303f002fa
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
@@ -12,7 +12,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
 - r2-1.6.0-security is 64 commits ahead of main, with no commits behind it.
-- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. A final exact-token nft rule-verification change is on the branch and awaiting its own CI run.
+- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. Subsequent CI run on commit `4801175d1024a081383077c867d1a07303f002fa` passed all 44 tests and Docker smoke (Actions run [42516023607](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516023607)).
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
@@ -65,7 +65,7 @@ R1 code and automated acceptance tests are complete. Real device provisioning an
 
 ### R2 — Complete containment and recovery safety (IN PROGRESS)
 
-**Latest verified test baseline:** commit `70368f0dd173eabda32323adf493145c6c5ddd47`; Actions run [42515663633](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42515663633). Python 3.10/3.11/3.12 and Docker API smoke passed; 35 automated tests passed. The branch has since received an additional exact-token nft rule-verification fix and regression test; CI for the newer head must pass before this section is advanced.
+**Latest verified code commit:** `4801175d1024a081383077c867d1a07303f002fa`; Actions run [42516023607](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516023607). Python 3.10/3.11/3.12 and Docker API smoke passed; 44 automated tests passed. This is CI evidence for mocked/unit and container tests, not privileged host-firewall integration.
 
 Implemented and covered by automated tests:
 - Process actions require command-line or start-time evidence; PID start-time mismatch, hint mismatch and unreadable proc identity fail closed.
@@ -74,7 +74,8 @@ Implemented and covered by automated tests:
 - IP parsing rejects invalid, loopback, unspecified, multicast and link-local targets.
 - Isolation refuses to proceed without a resolvable controller recovery address.
 - nftables and iptables fallback paths include controller recovery allowlisting and dual-stack handling; isolation does not grant general DNS or established-session egress.
-- Firewall rules are checked after insertion; rollback retains markers if the recorded backend is unavailable or state markers are corrupt.
+- Firewall rules are checked after insertion with token-boundary matching (so an address such as `192.0.2.1` cannot be mistaken for `192.0.2.10`). nftables tables require a CyberGuardian ownership marker before adoption or deletion.
+- Recovery intent is persisted before firewall changes. Missing first-run markers are handled separately from corrupt/unreadable markers; a failed final marker update leaves the pending recovery record.
 - Disruptive playbook actions (kill, isolate, block) remain human-approved. An arbitrary `allowlist_id` string is not accepted as authorization; a real tenant-scoped policy/approval service is required before any automatic disruptive allowlisting is introduced.
 
 Still required before R2 can be marked complete:
