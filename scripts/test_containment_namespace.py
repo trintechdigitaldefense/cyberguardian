@@ -163,7 +163,8 @@ def inside_namespace() -> int:
                 c._nft_add_once = original_add
             if partial.get("ok"):
                 fail("injected nft drop-rule failure was incorrectly reported as success")
-            if "# handle" in c._nft_chain(c.NFT_ISOLATE):
+            nft_rules = [line for line in c._nft_chain(c.NFT_ISOLATE).splitlines() if "# handle" in line and not line.lstrip().startswith("chain ")]
+            if nft_rules:
                 fail("partial nft isolation rules remained after injected failure")
         else:
             original_add = c._iptables_add_once
