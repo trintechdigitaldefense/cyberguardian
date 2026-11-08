@@ -234,6 +234,20 @@ def test_iptables_fallback_requires_and_configures_both_families(monkeypatch, tm
     assert ("ip6tables", c.IPT_ISOLATE, ["-j", "DROP"]) in calls
 
 
+
+def test_restore_refuses_corrupt_state_marker(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    c.BLOCK_MARKER.write_text("{broken-json")
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: False)
+    monkeypatch.setattr(c, "_has_iptables", lambda: False)
+    monkeypatch.setattr(c, "_has_ip6tables", lambda: False)
+    monkeypatch.setattr(c.shutil, "which", lambda tool: None)
+    result = c.restore_network()
+    assert not result["ok"]
+    assert "marker is corrupt" in result["detail"]
+    assert c.BLOCK_MARKER.exists()
+
 def test_restore_retains_marker_if_recorded_backend_is_missing(monkeypatch, tmp_path):
     _state_paths(tmp_path, monkeypatch)
     c.ISOLATE_MARKER.write_text(json.dumps({"status": "active", "backend": "nft"}))
