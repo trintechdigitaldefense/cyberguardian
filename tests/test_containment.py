@@ -266,6 +266,33 @@ def test_nft_isolation_does_not_allow_general_dns_or_established_egress(monkeypa
     assert not any("ct state established" in rule for rule in rendered)
 
 
+
+def test_iptables_rule_exists_uses_semantic_check_command(monkeypatch):
+    calls = []
+    def run(args, timeout=8):
+        calls.append(args)
+        return (0, "", "") if args == ["iptables", "-C", c.IPT_BLOCK, "-d", "198.51.100.8", "-j", "DROP"] else (1, "", "missing")
+    monkeypatch.setattr(c, "_run", run)
+    assert c._iptables_rule_exists("iptables", c.IPT_BLOCK, ["-d", "198.51.100.8", "-j", "DROP"])
+    assert calls == [["iptables", "-C", c.IPT_BLOCK, "-d", "198.51.100.8", "-j", "DROP"]]
+
+
+def test_iptables_add_once_verifies_with_check_not_listing_text(monkeypatch):
+    exists = {"value": False}
+    commands = []
+    def rule_exists(tool, chain, args):
+        if exists["value"]:
+            return True
+        return False
+    def run(args, timeout=8):
+        commands.append(args)
+        exists["value"] = True
+        return 0, "", ""
+    monkeypatch.setattr(c, "_iptables_rule_exists", rule_exists)
+    monkeypatch.setattr(c, "_run", run)
+    assert c._iptables_add_once("iptables", c.IPT_BLOCK, ["-d", "198.51.100.8", "-j", "DROP"])
+    assert commands == [["iptables", "-A", c.IPT_BLOCK, "-d", "198.51.100.8", "-j", "DROP"]]
+
 def test_iptables_fallback_requires_and_configures_both_families(monkeypatch, tmp_path):
     _state_paths(tmp_path, monkeypatch)
     v4 = ipaddress.ip_address("192.0.2.10")
