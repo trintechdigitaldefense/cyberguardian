@@ -41,7 +41,7 @@ jobs:
         run: |
           docker run -d --name cg-api -p 18080:8080 cyberguardian-api:ci
           for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || true)
+            code=$(curl --connect-timeout 1 --max-time 2 -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || true)
             if [ "$code" = "200" ]; then
               echo "API health check passed"
               exit 0
