@@ -146,6 +146,51 @@ def inside_namespace() -> int:
             if shutil.which(tool) and subprocess.run([tool, "-S", chain], capture_output=True).returncode == 0:
                 fail(f"{tool} chain {chain} remains after restore")
         print("PASS verified rollback and marker cleanup")
+
+        # Inject a failure at the final isolation DROP rule. The implementation
+        # must remove partially-applied isolation rules and keep a pending marker
+        # so the normal restore path can finish cleanup.
+        if isolated.get("backend") == "nft":
+            original_add = c._nft_add_once
+            def fail_nft_drop(chain, expression):
+                if chain == c.NFT_ISOLATE and expression == ["drop"]:
+                    return False
+                return original_add(chain, expression)
+            c._nft_add_once = fail_nft_drop
+            try:
+                partial = c.isolate_host(CTRL_V4)
+            finally:
+                c._nft_add_once = original_add
+            if partial.get("ok"):
+                fail("injected nft drop-rule failure was incorrectly reported as success")
+            if c._nft_chain(c.NFT_ISOLATE).strip():
+                fail("partial nft isolation rules remained after injected failure")
+        else:
+            original_add = c._iptables_add_once
+            def fail_iptables_drop(tool, chain, args):
+                if tool == "iptables" and chain == c.IPT_ISOLATE and args == ["-j", "DROP"]:
+                    return False
+                return original_add(tool, chain, args)
+            c._iptables_add_once = fail_iptables_drop
+            try:
+                partial = c.isolate_host(CTRL_V4)
+            finally:
+                c._iptables_add_once = original_add
+            if partial.get("ok"):
+                fail("injected iptables drop-rule failure was incorrectly reported as success")
+            for tool in ("iptables", "ip6tables"):
+                if c._iptables_chain_rules(tool, c.IPT_ISOLATE).strip():
+                    fail(f"partial {tool} isolation rules remained after injected failure")
+
+        pending = c._read_json(c.ISOLATE_MARKER, {})
+        if pending.get("status") != "pending":
+            fail("partial isolation failure did not retain pending recovery marker")
+        recovered = c.restore_network()
+        if not recovered.get("ok"):
+            fail(f"recovery after partial rule failure failed: {recovered.get('detail')}")
+        if c.ISOLATE_MARKER.exists() or c.BLOCK_MARKER.exists():
+            fail("markers remain after partial-failure recovery")
+        print("PASS partial firewall failure cleanup and pending-marker recovery")
         print("RESULT: all namespace containment checks passed")
         return 0
     finally:
