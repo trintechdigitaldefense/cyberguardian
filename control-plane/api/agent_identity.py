@@ -7,10 +7,11 @@ import json
 import os
 import time
 from pathlib import Path
+from runtime_paths import DATA_DIR, REPO_ROOT
 from typing import Any, Dict, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
+ROOT = REPO_ROOT
+DATA = DATA_DIR
 CREDS = DATA / "credentials.json"
 FINGERPRINTS = DATA / "agent_fingerprints.json"
 
