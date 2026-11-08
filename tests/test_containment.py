@@ -93,7 +93,7 @@ def test_block_ip_uses_nft_inet_for_ipv6(monkeypatch, tmp_path):
     commands = []
     monkeypatch.setattr(c, "_nft_add_once", lambda chain, expr: commands.append((chain, expr)) or True)
     monkeypatch.setattr(c, "_nft_chain", lambda chain: "ip6 daddr 2001:4860::1 drop")
-    monkeypatch.setattr(c, "_record_block", lambda address, backend: None)
+    monkeypatch.setattr(c, "_record_block", lambda address, backend, status="active": None)
     result = c.block_ip("2001:4860::1")
     assert result["ok"], result
     assert (c.NFT_BLOCK, ["ip6", "daddr", "2001:4860::1", "drop"]) in commands
