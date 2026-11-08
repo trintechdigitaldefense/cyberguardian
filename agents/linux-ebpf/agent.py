@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from offline_queue import OfflineQueue
 from containment import execute_command
+from command_crypto import verify_command, claim_command
 
 try:
     import fim as _fim
@@ -27,7 +28,7 @@ except ImportError:
     _net = None
 
 API = os.environ.get("CYBERGUARDIAN_API") or os.environ.get("CG_CONTROLLER_URL") or "http://127.0.0.1:8080"
-KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or ""
+KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or os.environ.get("CG_AGENT_API_KEY") or ""
 ASSET = os.environ.get("CYBERGUARDIAN_ASSET_ID") or f"linux-{socket.gethostname()}"
 TENANT = os.environ.get("CYBERGUARDIAN_TENANT") or "default"
 VERSION = "1.5.0-strength"
@@ -44,7 +45,7 @@ SUSPICIOUS = {"mimikatz", "powershell -enc", "nc.exe", "ncat", "meterpreter", "c
 def cg_api_post(path: str, payload: dict, timeout: int = 10):
     url = API.rstrip("/") + path
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": KEY}, method="POST")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": KEY, "X-Tenant-ID": TENANT}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -60,7 +61,7 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10):
 
 def cg_api_get(path: str, timeout: int = 10):
     url = API.rstrip("/") + path
-    req = urllib.request.Request(url, headers={"X-API-Key": KEY}, method="GET")
+    req = urllib.request.Request(url, headers={"X-API-Key": KEY, "X-Tenant-ID": TENANT}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -111,11 +112,9 @@ def register():
 
 
 def heartbeat():
-    cg_api_post("/v1/assets/register", {
-        "asset_id": ASSET, "hostname": socket.gethostname(), "asset_type": "endpoint",
-        "os": f"linux-{os.uname().release if hasattr(os, 'uname') else 'unknown'}",
-        "tags": ["linux", "smart-agent", f"v{VERSION}"], "agent_version": VERSION, "tenant_id": TENANT,
-    })
+    # Registration carries the signed fingerprint envelope; do not send an
+    # unsigned partial registration as a heartbeat.
+    return register()
 
 
 def list_processes():
@@ -141,15 +140,38 @@ def poll_and_execute_commands():
     if not ok or not isinstance(data, dict):
         return
     for cmd in data.get("commands") or []:
-        cmd_id = cmd.get("id")
-        action = cmd.get("action")
-        print(f"[agent] executing {action} id={cmd_id}")
+        cmd_id = str(cmd.get("id") or cmd.get("command_id") or "")
+        action = str(cmd.get("action") or "")
+        valid, reason = verify_command(
+            cmd,
+            expected_asset_id=ASSET,
+            expected_tenant_id=TENANT,
+        )
+        if not valid:
+            print(f"[agent] rejected invalid command id={cmd_id}: {reason}")
+            if cmd_id:
+                cg_api_post("/v1/agent/command-result", {
+                    "command_id": cmd_id, "asset_id": ASSET, "action": action,
+                    "target": cmd.get("target"), "ok": False,
+                    "detail": f"command rejected before execution: {reason}",
+                    "result": {"rejected": True, "reason": reason},
+                })
+            continue
+        if not claim_command(cmd):
+            print(f"[agent] rejected replayed command id={cmd_id}")
+            cg_api_post("/v1/agent/command-result", {
+                "command_id": cmd_id, "asset_id": ASSET, "action": action,
+                "target": cmd.get("target"), "ok": False,
+                "detail": "command replay rejected",
+                "result": {"rejected": True, "reason": "replay"},
+            })
+            continue
+        print(f"[agent] executing verified command {action} id={cmd_id}")
         result = execute_command(cmd, controller_url=API)
         cg_api_post("/v1/agent/command-result", {
             "command_id": cmd_id, "asset_id": ASSET, "action": action, "target": cmd.get("target"),
             "ok": bool(result.get("ok")), "detail": result.get("detail") or "", "result": result,
         })
-
 
 def fim_scan():
     global _fim_ready
