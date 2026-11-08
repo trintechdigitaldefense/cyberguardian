@@ -5,6 +5,7 @@ import html
 import hmac
 import os
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,25 @@ API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
 
 app = FastAPI(title="CyberGuardian Dashboard", version="1.4.0-tier3")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+    )
+    if COOKIE_SECURE:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if request.url.path == "/" or request.url.path == "/login" or request.url.path.startswith("/ops/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 COOKIE_SECURE = os.getenv("CG_COOKIE_SECURE", "1" if dashboard_auth.PRODUCTION else "0").strip().lower() in {"1", "true", "yes", "on"}
 SESSION_COOKIE = "__Host-cg_session" if COOKIE_SECURE else "cg_session"
 CSRF_COOKIE = "__Host-cg_csrf" if COOKIE_SECURE else "cg_csrf"
@@ -109,7 +129,7 @@ async def do_login(
         return RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
     token, csrf_token, expires = dashboard_auth.create_session(user)
     response = RedirectResponse("/", status_code=303)
-    max_age = max(1, int(expires - __import__("time").time()))
+    max_age = max(1, int(expires - time.time()))
     response.set_cookie(
         SESSION_COOKIE, token, httponly=True, secure=COOKIE_SECURE,
         samesite="lax", max_age=max_age, path="/",
