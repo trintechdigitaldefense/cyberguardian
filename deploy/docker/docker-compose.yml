@@ -9,6 +9,11 @@ services:
     environment:
       DECISION_SERVICE_URL: http://decision-service:8001
       CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+      CG_DATA_DIR: /app/data
+      CG_PRODUCTION: ${CG_PRODUCTION:-0}
+      CG_REQUIRE_AGENT_IDENTITY: ${CG_REQUIRE_AGENT_IDENTITY:-0}
+    volumes:
+      - ${CG_DATA_HOST_DIR:-../../data}:/app/data
     depends_on: [decision-service]
   nad-processor:
     build: ../../control-plane/nad-processor
