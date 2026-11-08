@@ -10,6 +10,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -246,16 +247,21 @@ def _nft_chain(chain: str) -> str:
     return _run(["nft", "-a", "list", "chain", NFT_FAMILY, NFT_TABLE, chain], timeout=5)[1]
 
 
+def _normalize_nft_rules(value: str) -> str:
+    normalized = re.sub(r"\\s+", " ", value)
+    normalized = re.sub(r"\\s*,\\s*", ",", normalized)
+    return normalized.replace("{ ", "{").replace(" }", "}").strip()
+
+
 def _nft_add_once(chain: str, expression: List[str]) -> bool:
-    listing = _nft_chain(chain)
-    rendered = " ".join(expression)
-    if rendered in listing:
+    rendered = _normalize_nft_rules(" ".join(expression))
+    if rendered in _normalize_nft_rules(_nft_chain(chain)):
         return True
     rc, out, err = _run(["nft", "add", "rule", NFT_FAMILY, NFT_TABLE, chain, *expression], timeout=5)
     if rc != 0:
         return False
-    return rendered in _nft_chain(chain) or _run(["nft", "list", "table", NFT_FAMILY, NFT_TABLE], timeout=5)[0] == 0
-
+    # Never treat table existence as proof that the requested rule is active.
+    return rendered in _normalize_nft_rules(_nft_chain(chain))
 
 def _nft_ensure() -> bool:
     if not _nft_exists("table", NFT_FAMILY, NFT_TABLE):
@@ -265,6 +271,9 @@ def _nft_ensure() -> bool:
         base = "{ type filter hook output priority 0; policy accept; }"
         if _run(["nft", "add", "chain", NFT_FAMILY, NFT_TABLE, NFT_OUTPUT, base], timeout=5)[0] != 0:
             return False
+    base_listing = _nft_chain(NFT_OUTPUT)
+    if "hook output" not in base_listing or "policy accept" not in base_listing:
+        return False
     for chain in (NFT_ISOLATE, NFT_BLOCK):
         if not _nft_exists("chain", NFT_FAMILY, NFT_TABLE, chain):
             if _run(["nft", "add", "chain", NFT_FAMILY, NFT_TABLE, chain], timeout=5)[0] != 0:
