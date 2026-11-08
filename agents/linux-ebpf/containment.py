@@ -465,6 +465,16 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
         if not _nft_ensure():
             result["detail"] = "nft table/chain setup failed; isolation not applied"
             return result
+        backend = "nft"
+        try:
+            _write_json_atomic(ISOLATE_MARKER, {
+                "status": "pending", "ts": time.time(), "backend": backend,
+                "controller": controller_hint, "controller_ips": [str(ip) for ip in controller_ips],
+                "applied": [],
+            })
+        except OSError as exc:
+            result["detail"] = f"cannot persist isolation recovery marker; no isolation rules applied: {exc}"
+            return result
         rules = [
             ["oifname", "lo", "accept"],
             ["icmp", "type", "{", "destination-unreachable", ",", "time-exceeded", ",", "parameter-problem", "}", "accept"],
@@ -507,6 +517,16 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
                 _clear_iptables_isolation()
                 result["detail"] = f"failed to create CyberGuardian-owned chains with {tool}"
                 return result
+        backend = "iptables+ip6tables"
+        try:
+            _write_json_atomic(ISOLATE_MARKER, {
+                "status": "pending", "ts": time.time(), "backend": backend,
+                "controller": controller_hint, "controller_ips": [str(ip) for ip in controller_ips],
+                "applied": [],
+            })
+        except OSError as exc:
+            result["detail"] = f"cannot persist isolation recovery marker; no isolation rules applied: {exc}"
+            return result
         allow_rules = {
             tools[4]: [
                 ["-o", "lo", "-j", "ACCEPT"],
@@ -549,11 +569,15 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
         applied.append("scoped dual-stack iptables isolation")
         backend = "iptables+ip6tables"
 
-    _write_json_atomic(ISOLATE_MARKER, {
-        "status": "active", "ts": time.time(), "backend": backend,
-        "controller": controller_hint, "controller_ips": [str(ip) for ip in controller_ips],
-        "applied": applied,
-    })
+    try:
+        _write_json_atomic(ISOLATE_MARKER, {
+            "status": "active", "ts": time.time(), "backend": backend,
+            "controller": controller_hint, "controller_ips": [str(ip) for ip in controller_ips],
+            "applied": applied,
+        })
+    except OSError as exc:
+        result["detail"] = f"isolation rules applied but active marker update failed; pending recovery marker retained: {exc}"
+        return result
     result.update(ok=True, detail="isolated with verified CyberGuardian-owned rules: " + ", ".join(applied), backend=backend)
     return result
 
