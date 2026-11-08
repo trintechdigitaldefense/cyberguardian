@@ -59,7 +59,7 @@ def test_kill_process_uses_pidfd_bound_to_same_starttime(monkeypatch):
         {"start_time": "123", "state": "S", "cmdline": "python worker.py"},
         None,
     ]
-    monkeypatch.setattr(c, "_proc_identity", lambda pid: snapshots.pop(0))
+    monkeypatch.setattr(c, "_proc_identity", lambda pid: snapshots.pop(0) if snapshots else None)
     monkeypatch.setattr(c.os, "pidfd_open", lambda pid, flags: 77, raising=False)
     monkeypatch.setattr(c.signal, "pidfd_send_signal", lambda fd, sig, info, flags: calls.append((fd, sig)), raising=False)
     monkeypatch.setattr(c, "_pidfd_exited", lambda fd: True)
