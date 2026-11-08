@@ -29,7 +29,7 @@ jobs:
         run: python -m pytest tests/ -q --tb=short
       - name: Compile application modules
         run: |
-          python -m py_compile control-plane/api/main.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py dashboard/main.py scripts/enroll_agent.py
+          python -m py_compile control-plane/api/main.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py dashboard/main.py scripts/enroll_agent.py scripts/test_containment_namespace.py
 
   docker-api:
     runs-on: ubuntu-latest
