@@ -5,10 +5,11 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from runtime_paths import DATA_DIR, REPO_ROOT, CONFIG_DIR
 from typing import Any, Dict, List, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
+ROOT = REPO_ROOT
+DATA = DATA_DIR
 STORE = DATA / "false_positives.json"
 DEFAULT_SUPPRESS_DAYS = 14
 
