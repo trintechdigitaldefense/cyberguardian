@@ -30,6 +30,6 @@ def test_gateway_assembles_and_matches_published_digest() -> None:
     ast.parse(source.decode("utf-8"), filename=str(gateway))
 
     checksum_text = (API_DIR / "GATEWAY_SHA256.txt").read_text(encoding="ascii")
-    match = re.search(r"^([0-9a-f]{64})\\s+main_full\\.py\\s*$", checksum_text, re.MULTILINE)
+    match = re.search(r"^([0-9a-f]{64})\s+main_full\.py\s*$", checksum_text, re.MULTILINE)
     assert match, "GATEWAY_SHA256.txt must declare the expected main_full.py digest"
     assert hashlib.sha256(source).hexdigest() == match.group(1)
