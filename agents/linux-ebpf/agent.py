@@ -31,6 +31,7 @@ API = os.environ.get("CYBERGUARDIAN_API") or os.environ.get("CG_CONTROLLER_URL")
 KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or os.environ.get("CG_AGENT_API_KEY") or ""
 ASSET = os.environ.get("CYBERGUARDIAN_ASSET_ID") or f"linux-{socket.gethostname()}"
 TENANT = os.environ.get("CYBERGUARDIAN_TENANT") or "default"
+PROC_ROOT = Path("/proc")
 VERSION = "1.5.0-strength"
 
 queue = OfflineQueue()
@@ -117,23 +118,35 @@ def heartbeat():
     return register()
 
 
+def _proc_start_time(pid: str) -> str:
+    try:
+        stat_text = (PROC_ROOT / str(pid) / "stat").read_text(encoding="utf-8")
+        close = stat_text.rfind(")")
+        if close < 0:
+            return ""
+        fields = stat_text[close + 2 :].split()
+        return fields[19] if len(fields) > 19 else ""
+    except (OSError, ValueError, IndexError):
+        return ""
+
+
 def list_processes():
     procs = []
     try:
-        for pid in os.listdir("/proc"):
+        for pid in os.listdir(str(PROC_ROOT)):
             if not pid.isdigit():
                 continue
             try:
-                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore").strip()
+                proc = PROC_ROOT / pid
+                cmd = (proc / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore").strip()
                 if not cmd:
-                    cmd = Path(f"/proc/{pid}/comm").read_text(errors="ignore").strip()
-                procs.append({"pid": pid, "cmd": cmd})
+                    cmd = (proc / "comm").read_text(errors="ignore").strip()
+                procs.append({"pid": pid, "cmd": cmd, "start_time": _proc_start_time(pid)})
             except Exception:
                 continue
     except Exception:
         pass
     return procs
-
 
 def poll_and_execute_commands():
     ok, data = cg_api_get(f"/v1/agent/commands?asset_id={ASSET}")
@@ -242,7 +255,7 @@ def scan_once():
                 cg_api_post("/v1/detections", {
                     "source": "linux-agent", "asset_id": ASSET, "severity": "high", "confidence": 0.9,
                     "title": title, "description": f"Matched indicator '{s}' in process",
-                    "indicators": {"pid": p["pid"], "cmdline": p["cmd"][:200]},
+                    "indicators": {"pid": p["pid"], "cmdline": p["cmd"][:200], "cmdline_hint": p["cmd"][:200], "expected_starttime": p.get("start_time") or ""},
                     "tags": ["suspicious_process", "credential_access"] if "mimikatz" in s else ["suspicious_process"],
                     "tenant_id": TENANT,
                 })
