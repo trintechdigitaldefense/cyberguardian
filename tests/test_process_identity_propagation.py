@@ -33,7 +33,7 @@ def test_agent_inventory_captures_proc_starttime(tmp_path, monkeypatch):
     proc.mkdir()
     fields = ["S"] + [str(i) for i in range(1, 19)] + ["987654"]
     (proc / "stat").write_text(f"4321 (worker process) " + " ".join(fields))
-    (proc / "cmdline").write_bytes(b"python\x00worker.py\\x00")
+    (proc / "cmdline").write_bytes(b"python\x00worker.py\x00")
     monkeypatch.setattr(agent, "PROC_ROOT", tmp_path)
     found = agent.list_processes()
     assert found == [{
