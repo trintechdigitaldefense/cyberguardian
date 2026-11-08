@@ -356,11 +356,13 @@ def _iptables_add_once(tool: str, chain: str, args: List[str]) -> bool:
     return line in _iptables_chain_rules(tool, chain)
 
 
-def _record_block(address: ipaddress._BaseAddress, backend: str) -> None:
+def _record_block(address: ipaddress._BaseAddress, backend: str, status: str = "active") -> None:
     data = _read_json(BLOCK_MARKER, {"ips": {}})
     if data.get("_invalid_marker") or not isinstance(data.get("ips"), dict):
-        data = {"ips": {}}
-    data.setdefault("ips", {})[str(address)] = {"version": address.version, "backend": backend, "ts": time.time()}
+        raise ValueError("block state marker is corrupt; refusing untracked firewall changes")
+    data.setdefault("ips", {})[str(address)] = {
+        "version": address.version, "backend": backend, "status": status, "ts": time.time()
+    }
     _write_json_atomic(BLOCK_MARKER, data)
 
 
@@ -378,24 +380,42 @@ def block_ip(ip: str) -> Dict[str, Any]:
         return result
 
     if _has_nft():
-        if _nft_ensure():
-            family = "ip" if address.version == 4 else "ip6"
-            if _nft_add_once(NFT_BLOCK, [family, "daddr", str(address), "drop"]):
-                listing = _nft_chain(NFT_BLOCK)
-                if f"{family} daddr {address} drop" in listing:
-                    _record_block(address, "nft")
-                    result.update(ok=True, detail=f"nft {family} drop {address}", backend="nft")
+        backend = "nft"
+        family = "ip" if address.version == 4 else "ip6"
+        try:
+            # Persist recovery intent before making any firewall change.
+            _record_block(address, backend, status="pending")
+        except (OSError, ValueError) as exc:
+            result["detail"] = f"cannot persist rollback marker; no firewall rule applied: {exc}"
+            return result
+        if _nft_ensure() and _nft_add_once(NFT_BLOCK, [family, "daddr", str(address), "drop"]):
+            if _nft_rule_present(NFT_BLOCK, [family, "daddr", str(address), "drop"]):
+                try:
+                    _record_block(address, backend, status="active")
+                except OSError as exc:
+                    result["detail"] = f"block applied but active marker update failed; pending recovery marker retained: {exc}"
                     return result
-        result["detail"] = "nft rule could not be applied and verified"
+                result.update(ok=True, detail=f"nft {family} drop {address}", backend=backend)
+                return result
+        result["detail"] = "nft rule could not be applied and verified; pending recovery marker retained"
         return result
 
     tool = _iptables_tool(address.version)
-    if tool and _iptables_ensure(tool):
-        if _iptables_add_once(tool, IPT_BLOCK, ["-d", str(address), "-j", "DROP"]):
-            _record_block(address, tool)
+    if tool:
+        try:
+            _record_block(address, tool, status="pending")
+        except (OSError, ValueError) as exc:
+            result["detail"] = f"cannot persist rollback marker; no firewall rule applied: {exc}"
+            return result
+        if _iptables_ensure(tool) and _iptables_add_once(tool, IPT_BLOCK, ["-d", str(address), "-j", "DROP"]):
+            try:
+                _record_block(address, tool, status="active")
+            except OSError as exc:
+                result["detail"] = f"block applied but active marker update failed; pending recovery marker retained: {exc}"
+                return result
             result.update(ok=True, detail=f"{tool} DROP {address}", backend=tool)
             return result
-    result["detail"] = "no supported firewall backend could apply and verify the block"
+    result["detail"] = "no supported firewall backend could apply and verify the block; recovery marker retained if written"
     return result
 
 
