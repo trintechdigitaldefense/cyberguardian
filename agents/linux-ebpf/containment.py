@@ -94,8 +94,12 @@ def _write_json_atomic(path: Path, value: Dict[str, Any]) -> None:
 def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else dict(default)
+        return value if isinstance(value, dict) else {"_invalid_marker": True}
+    except FileNotFoundError:
+        # A first-run state file is expected to be absent; use the clean default.
+        return dict(default)
     except (OSError, ValueError):
+        # Existing but unreadable/corrupt state must never be mistaken for empty state.
         return {"_invalid_marker": True}
 
 
