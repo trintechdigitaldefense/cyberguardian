@@ -173,35 +173,53 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, str]]:
     return None
 
 
-def _attempt_key(client_ip: str, username: str) -> str:
-    value = f"{client_ip.strip()}|{username.strip().casefold()}".encode("utf-8")
-    return hashlib.sha256(value).hexdigest()
+def _attempt_keys(client_ip: str, username: str) -> tuple[str, str, str]:
+    ip = client_ip.strip()
+    user = username.strip().casefold()
+    pair_key = hashlib.sha256(f"pair|{ip}|{user}".encode("utf-8")).hexdigest()
+    ip_key = hashlib.sha256(f"ip|{ip}".encode("utf-8")).hexdigest()
+    user_key = hashlib.sha256(f"user|{user}".encode("utf-8")).hexdigest()
+    return pair_key, ip_key, user_key
 
 
 def is_rate_limited(client_ip: str, username: str, now: Optional[float] = None) -> bool:
     current = time.time() if now is None else float(now)
-    key = _attempt_key(client_ip, username)
+    pair_key, ip_key, user_key = _attempt_keys(client_ip, username)
     with _connect() as conn:
         conn.execute("DELETE FROM dashboard_login_attempts WHERE attempted_at < ?", (current - LOGIN_WINDOW_SECONDS,))
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM dashboard_login_attempts WHERE attempt_key=? AND success=0 AND attempted_at>=?",
-            (key, current - LOGIN_WINDOW_SECONDS),
-        ).fetchone()
-    return int(row["n"] if row else 0) >= MAX_LOGIN_FAILURES
+        counts = {}
+        for label, key in (("pair", pair_key), ("ip", ip_key), ("user", user_key)):
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM dashboard_login_attempts WHERE attempt_key=? AND success=0 AND attempted_at>=?",
+                (key, current - LOGIN_WINDOW_SECONDS),
+            ).fetchone()
+            counts[label] = int(row["n"] if row else 0)
+    return (
+        counts["pair"] >= MAX_LOGIN_FAILURES
+        or counts["ip"] >= MAX_LOGIN_FAILURES * 5
+        or counts["user"] >= MAX_LOGIN_FAILURES * 4
+    )
 
 
 def record_login_attempt(client_ip: str, username: str, success: bool, now: Optional[float] = None) -> None:
     current = time.time() if now is None else float(now)
-    key = _attempt_key(client_ip, username)
+    pair_key, ip_key, user_key = _attempt_keys(client_ip, username)
     with _connect() as conn:
         conn.execute(
             "INSERT INTO dashboard_login_attempts(attempt_key, attempted_at, success) VALUES (?, ?, ?)",
-            (key, current, 1 if success else 0),
+            (pair_key, current, 1 if success else 0),
         )
+        if not success:
+            conn.executemany(
+                "INSERT INTO dashboard_login_attempts(attempt_key, attempted_at, success) VALUES (?, ?, 0)",
+                [(ip_key, current), (user_key, current)],
+            )
         conn.execute("DELETE FROM dashboard_login_attempts WHERE attempted_at < ?", (current - LOGIN_WINDOW_SECONDS,))
         if success:
-            conn.execute("DELETE FROM dashboard_login_attempts WHERE attempt_key=?", (key,))
-
+            conn.execute(
+                "DELETE FROM dashboard_login_attempts WHERE attempt_key IN (?, ?)",
+                (pair_key, user_key),
+            )
 
 def create_session(user: Dict[str, str], now: Optional[float] = None) -> tuple[str, str, float]:
     current = time.time() if now is None else float(now)
