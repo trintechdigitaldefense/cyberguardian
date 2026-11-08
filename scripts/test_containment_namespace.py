@@ -133,8 +133,10 @@ def inside_namespace() -> int:
             print("PASS nftables controller allowlist and final drop")
         else:
             for tool, address in (("iptables", CTRL_V4), ("ip6tables", CTRL_V6)):
-                rules = c._iptables_chain_rules(tool, c.IPT_ISOLATE)
-                if f"-d {address} -j ACCEPT" not in rules or "-j DROP" not in rules:
+                if (
+                    not c._iptables_rule_exists(tool, c.IPT_ISOLATE, ["-d", address, "-j", "ACCEPT"])
+                    or not c._iptables_rule_exists(tool, c.IPT_ISOLATE, ["-j", "DROP"])
+                ):
                     fail(f"{tool} controller allowlist/final drop missing")
             print("PASS dual-stack iptables controller allowlist and final drop")
 
