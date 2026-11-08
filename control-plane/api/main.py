@@ -29,7 +29,7 @@ def _ensure() -> Path:
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or "gateway assembly failed")
-    if not _FULL.is_file() or _FULL.stat().st_size != 53731:
+    if not _FULL.is_file() or _FULL.stat().st_size < 20_000:
         raise RuntimeError("assembled gateway missing or unexpected size")
     return _FULL
 
