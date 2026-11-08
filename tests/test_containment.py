@@ -305,6 +305,7 @@ def test_iptables_fallback_requires_and_configures_both_families(monkeypatch, tm
     monkeypatch.setattr(c, "_write_json_atomic", lambda path, value: None)
     calls = []
     monkeypatch.setattr(c, "_iptables_add_once", lambda tool, chain, args: calls.append((tool, chain, args)) or True)
+    monkeypatch.setattr(c, "_iptables_rule_exists", lambda tool, chain, args: True)
     monkeypatch.setattr(c, "_iptables_chain_rules", lambda tool, chain: "-j DROP")
     result = c.isolate_host("https://controller.example:8080")
     assert result["ok"], result
