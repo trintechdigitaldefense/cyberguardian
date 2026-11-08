@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 data/credentials.json
 data/*.db
 data/*.db.bak
