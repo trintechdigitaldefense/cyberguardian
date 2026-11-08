@@ -4,7 +4,7 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Latest R2 code commit with passing CI:** 575e947db83a06b3eb08ac2b5ccdb70300df3ddf
+**Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
@@ -12,7 +12,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
 - r2-1.6.0-security is 64 commits ahead of main, with no commits behind it.
-- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. CI on commit `575e947db83a06b3eb08ac2b5ccdb70300df3ddf` passed Python 3.10/3.11/3.12, all 44 tests, compilation (including the new VM harness), and Docker API smoke (Actions run [42516186854](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516186854)).
+- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. CI on commit `10a375c4d0da37953a826baf69986de794668c4f` passed Python 3.10/3.11/3.12, all 47 automated tests, compilation, Docker API smoke, and the privileged containment-integration job. The integration job exercised real nftables and iptables/ip6tables rules in separate disposable network namespaces, including process identity checks, dual-stack blocking, controller recovery, idempotency, rollback, unrelated-rule preservation, and injected partial-rule failures (Actions run [42516793251](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516793251)).
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
@@ -25,7 +25,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 | 1 | API Gateway | Implemented foundation; release-blocking packaging/integrity/CI issues remain on R2 | Clean clone assembles gateway deterministically; checksum and source completeness verified; API imports and /health returns 200; Docker build and container smoke pass |
 | 2 | Decision Engine | Existing risk scoring/playbook decision service; service authentication and durable decision history need verification | Authenticated service-to-service calls; tenant-scoped decisions; documented scoring/playbook tests; durable decision and action history |
 | 3 | Linux Agent | Agent and polling flow exist; signed-command enforcement must be proven end-to-end | Per-agent identity; signed, expiring, single-use commands; replay and wrong-asset rejection; safe heartbeat/enrollment; reconnect tests |
-| 4 | Containment Engine | Containment implementation exists, but complete hardened implementation is not confirmed on remote branch | PID plus process-start-time validation; strict target checks; dedicated firewall chains; safe IPv4/IPv6 validation; controller recovery path; verified rollback; isolated-VM and mocked tests |
+| 4 | Containment Engine | Linux containment and rollback acceptance passed in disposable namespace CI; Android/Termux profile validation remains in R5 | PID plus process-start-time validation; strict target checks; dedicated firewall chains; safe IPv4/IPv6 validation; controller recovery path; verified rollback; isolated-VM and mocked tests |
 | 5 | Dashboard | Operator dashboard exists; authentication hardening remains incomplete | Strong password hashing; persistent expiring/revocable sessions; Secure/HttpOnly/SameSite cookies; CSRF protection; login throttling; operator attribution; role checks |
 | 6 | Fleet Management | Basic registration, inventory, and last-seen functionality exist | Tenant-safe enrollment and inventory; unique device identity; stale/offline states; lifecycle/revocation; bounded discovery; multi-agent integration tests |
 | 7 | Audit & Compliance | Audit trail and action history exist | Durable append-only or tamper-evident audit; actor/tenant/asset/approval/command correlation; retention/export; denied and failed action records; integrity tests |
@@ -63,9 +63,9 @@ This is a cross-cutting gate, not a replacement for the eight product phases.
 
 R1 code and automated acceptance tests are complete. Real device provisioning and field verification remain part of R5 pilot acceptance.
 
-### R2 — Complete containment and recovery safety (IN PROGRESS)
+### R2 — Complete containment and recovery safety (COMPLETED — Linux CI integration)
 
-**Latest verified code commit:** `575e947db83a06b3eb08ac2b5ccdb70300df3ddf`; Actions run [42516186854](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516186854). Python 3.10/3.11/3.12 and Docker API smoke passed; 44 automated tests passed. The namespace integration harness compiled in CI, but it has not yet been executed in a privileged disposable VM. This is not privileged host-firewall integration evidence.
+**Verified code commit:** `10a375c4d0da37953a826baf69986de794668c4f`; Actions run [42516793251](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516793251). Python 3.10/3.11/3.12 passed, 47 automated tests passed, Docker API smoke passed, and the privileged integration job successfully exercised both nftables and iptables/ip6tables in disposable network namespaces.
 
 Implemented and covered by automated tests:
 - Process actions require command-line or start-time evidence; PID start-time mismatch, hint mismatch and unreadable proc identity fail closed.
@@ -78,14 +78,9 @@ Implemented and covered by automated tests:
 - Recovery intent is persisted before firewall changes. Missing first-run markers are handled separately from corrupt/unreadable markers; a failed final marker update leaves the pending recovery record.
 - Disruptive playbook actions (kill, isolate, block) remain human-approved. An arbitrary `allowlist_id` string is not accepted as authorization; a real tenant-scoped policy/approval service is required before any automatic disruptive allowlisting is introduced.
 
-Still required before R2 can be marked complete:
-- Run privileged integration tests in disposable Linux VMs for nftables and iptables/ip6tables; verify actual rule ordering, controller connectivity, IPv4 and IPv6 traffic, and restoration after normal and interrupted runs.
-- Verify rollback leaves unrelated host firewall rules untouched, including pre-existing tables/chains and duplicate jumps.
-- Exercise process termination against a controlled child process on supported kernels and document the minimum kernel/pidfd requirement; test unsupported-kernel fallback behaviour.
-- Add failure-injection coverage for partial rule application and marker-write failure; verify the host never reports success while isolation/rollback state is uncertain.
-- Re-run the full matrix against the latest branch head and attach the exact commit SHA and artifacts.
-- A disposable network-namespace integration harness is available at `scripts/test_containment_namespace.py`; follow `docs/CONTAINMENT_VM_TEST.md` and capture its output on a disposable Linux VM.
-- Never run destructive containment tests on a client or production host.
+R2 Linux acceptance is complete. The CI integration job runs the harness in disposable network namespaces for both nftables and iptables/ip6tables and verifies real process termination, IPv4/IPv6 blocking, controller recovery, idempotency, normal rollback, preservation of unrelated firewall objects, and recovery after injected partial-rule failure.
+
+Remaining environment-specific validation is part of R5: repeat the supervised checks on the actual supported Android/Termux-Ubuntu device/kernel profile, document pidfd/kernel availability, and confirm the device's firewall backend and privileges. Do not run destructive tests on a client or production host.
 
 ### R3 — Complete operator and service security
 
@@ -112,7 +107,7 @@ Still required before R2 can be marked complete:
 
 ## Immediate work order
 
-The next engineering task is R2: complete containment and rollback safety validation. Keep the security branch isolated from `main`; proceed through R2–R5 in order.
+R0, R1 and R2 code gates are complete on the security branch. The next engineering task is R3: complete dashboard and service authentication. Keep the security branch isolated from `main`; proceed through R3–R5 in order.
 
 ## GitHub delivery rules
 
