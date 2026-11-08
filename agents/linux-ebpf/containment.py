@@ -33,6 +33,8 @@ BLOCK_MARKER = STATE_DIR / "blocked_ips.json"
 
 NFT_FAMILY = "inet"
 NFT_TABLE = "cyberguardian"
+NFT_OWNER = "cg_owner"
+NFT_OWNER_COMMENT = "CyberGuardian managed table v1"
 NFT_OUTPUT = "cg_output"
 NFT_ISOLATE = "cg_isolate"
 NFT_BLOCK = "cg_block"
@@ -274,10 +276,25 @@ def _nft_add_once(chain: str, expression: List[str]) -> bool:
     # Never treat table existence or a prefix/substring as proof that the rule is active.
     return _nft_rule_present(chain, expression)
 
+def _nft_owner_verified() -> bool:
+    if not _nft_exists("chain", NFT_FAMILY, NFT_TABLE, NFT_OWNER):
+        return False
+    listing = _nft_chain(NFT_OWNER)
+    return f'comment "{NFT_OWNER_COMMENT}"' in listing
+
+
 def _nft_ensure() -> bool:
     if not _nft_exists("table", NFT_FAMILY, NFT_TABLE):
         if _run(["nft", "add", "table", NFT_FAMILY, NFT_TABLE], timeout=5)[0] != 0:
             return False
+        owner_definition = f'{{ comment "{NFT_OWNER_COMMENT}"; }}'
+        if _run(["nft", "add", "chain", NFT_FAMILY, NFT_TABLE, NFT_OWNER, owner_definition], timeout=5)[0] != 0:
+            return False
+    elif not _nft_owner_verified():
+        # Never adopt or later delete a same-named table that another component owns.
+        return False
+    if not _nft_owner_verified():
+        return False
     if not _nft_exists("chain", NFT_FAMILY, NFT_TABLE, NFT_OUTPUT):
         base = "{ type filter hook output priority 0; policy accept; }"
         if _run(["nft", "add", "chain", NFT_FAMILY, NFT_TABLE, NFT_OUTPUT, base], timeout=5)[0] != 0:
@@ -633,9 +650,12 @@ def restore_network() -> Dict[str, Any]:
     if "iptables+ip6tables" in recorded_backends and (not _has_iptables() or not _has_ip6tables()):
         failures.append("dual-stack iptables backend incomplete; cannot verify full restore")
     if _has_nft() and _nft_exists("table", NFT_FAMILY, NFT_TABLE):
-        rc, out, err = _run(["nft", "delete", "table", NFT_FAMILY, NFT_TABLE], timeout=8)
-        if rc != 0 or _nft_exists("table", NFT_FAMILY, NFT_TABLE):
-            failures.append(f"nft cleanup failed: {err or out or 'table still exists'}")
+        if not _nft_owner_verified():
+            failures.append("refusing to delete same-named nft table without CyberGuardian ownership marker")
+        else:
+            rc, out, err = _run(["nft", "delete", "table", NFT_FAMILY, NFT_TABLE], timeout=8)
+            if rc != 0 or _nft_exists("table", NFT_FAMILY, NFT_TABLE):
+                failures.append(f"nft cleanup failed: {err or out or 'table still exists'}")
 
     for tool in ("iptables", "ip6tables"):
         if shutil.which(tool) is not None and not _cleanup_iptables(tool):
