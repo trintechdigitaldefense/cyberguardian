@@ -9,10 +9,13 @@ Set these environment variables in the controller service environment:
 ```sh
 CG_PRODUCTION=1
 CG_REQUIRE_AGENT_IDENTITY=1
+CG_DATA_HOST_DIR=/var/lib/cyberguardian
+
+# When running the enrollment script directly on the controller host:
 CG_DATA_DIR=/var/lib/cyberguardian
 ```
 
-Use a persistent, access-controlled data directory. Ensure the controller service account owns it and restrict access to the service account. Keep the admin API key separate from every agent key.
+Use a persistent, access-controlled data directory. Create it with mode 0700 and ensure the controller service account owns it. With Docker Compose, set CG_DATA_HOST_DIR to this host path; Compose mounts it at /app/data and sets CG_DATA_DIR=/app/data inside the API container. When running the enrollment script on the host, set CG_DATA_DIR to the host path. Keep the admin API key separate from every agent key.
 
 Restart the API after setting the production variables. In production, an agent without an active per-agent enrollment record is rejected.
 
