@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENT_DIR = ROOT / "agents" / "linux-ebpf"
 DECISION_DIR = ROOT / "control-plane" / "decision-service"
 sys.path.insert(0, str(AGENT_DIR))
+sys.path.insert(0, str(DECISION_DIR))
 
 
 def _load_agent():
