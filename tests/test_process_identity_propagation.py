@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENT_DIR = ROOT / "agents" / "linux-ebpf"
 DECISION_DIR = ROOT / "control-plane" / "decision-service"
 sys.path.insert(0, str(AGENT_DIR))
-sys.path.insert(0, str(DECISION_DIR))
 
 
 def _load_agent():
@@ -20,11 +19,15 @@ def _load_agent():
 
 
 def _load_decision():
-    spec = importlib.util.spec_from_file_location("cg_decision_process_test", DECISION_DIR / "main.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    sys.path.insert(0, str(DECISION_DIR))
+    try:
+        spec = importlib.util.spec_from_file_location("cg_decision_process_test", DECISION_DIR / "main.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(DECISION_DIR))
 
 
 def test_agent_inventory_captures_proc_starttime(tmp_path, monkeypatch):
