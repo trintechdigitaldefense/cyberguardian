@@ -256,7 +256,7 @@ def _nft_chain(chain: str) -> str:
 def _normalize_nft_rules(value: str) -> str:
     normalized = re.sub(r"\s+", " ", value)
     normalized = re.sub(r"\s*,\s*", ",", normalized)
-    normalized = re.sub(r\'"([^"]*)"\', r"\\1", normalized)
+    normalized = re.sub(r'"([^"]*)"', r'\1', normalized)
     return normalized.replace("{ ", "{").replace(" }", "}").strip()
 
 
