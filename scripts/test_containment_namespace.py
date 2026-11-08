@@ -82,6 +82,27 @@ def inside_namespace() -> int:
         c.ipaddress.ip_address(CTRL_V6),
     ]
 
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        identity = c._proc_identity(child.pid)
+        if not identity or not identity.get("start_time"):
+            fail("could not capture controlled child process identity")
+        wrong_hint = c.kill_process(str(child.pid), expected_hint="not-this-process", expected_starttime=identity["start_time"])
+        if wrong_hint.get("ok") or child.poll() is not None:
+            fail("process command-line mismatch was not rejected safely")
+        wrong_start = c.kill_process(str(child.pid), expected_hint=sys.executable, expected_starttime="0")
+        if wrong_start.get("ok") or child.poll() is not None:
+            fail("process start-time mismatch was not rejected safely")
+        stopped = c.kill_process(str(child.pid), expected_hint=sys.executable, expected_starttime=identity["start_time"])
+        if not stopped.get("ok"):
+            fail(f"verified process termination failed: {stopped.get('detail')}")
+        child.wait(timeout=4)
+        print("PASS process command identity, start-time binding and safe termination")
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=3)
+
     try:
         for address in (TEST_V4, TEST_V6):
             result = c.block_ip(address)
@@ -93,6 +114,10 @@ def inside_namespace() -> int:
         if not isolated.get("ok"):
             fail(f"isolate_host failed: {isolated.get('detail')}")
         print(f"PASS isolate_host via {isolated.get('backend')}")
+        repeated = c.isolate_host(CTRL_V4)
+        if not repeated.get("ok"):
+            fail(f"idempotent isolate_host call failed: {repeated.get('detail')}")
+        print("PASS idempotent isolation verification")
 
         marker = c._read_json(c.ISOLATE_MARKER, {})
         if marker.get("status") != "active":
