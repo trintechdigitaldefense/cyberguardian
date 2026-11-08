@@ -163,7 +163,7 @@ def inside_namespace() -> int:
                 c._nft_add_once = original_add
             if partial.get("ok"):
                 fail("injected nft drop-rule failure was incorrectly reported as success")
-            if c._nft_chain(c.NFT_ISOLATE).strip():
+            if "# handle" in c._nft_chain(c.NFT_ISOLATE):
                 fail("partial nft isolation rules remained after injected failure")
         else:
             original_add = c._iptables_add_once
@@ -179,7 +179,7 @@ def inside_namespace() -> int:
             if partial.get("ok"):
                 fail("injected iptables drop-rule failure was incorrectly reported as success")
             for tool in ("iptables", "ip6tables"):
-                if c._iptables_chain_rules(tool, c.IPT_ISOLATE).strip():
+                if f"-A {c.IPT_ISOLATE} " in c._iptables_chain_rules(tool, c.IPT_ISOLATE):
                     fail(f"partial {tool} isolation rules remained after injected failure")
 
         pending = c._read_json(c.ISOLATE_MARKER, {})
