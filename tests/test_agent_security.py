@@ -62,7 +62,7 @@ def test_allowlisted_disruptive_command_has_auditable_approval_reference():
         "action": "block_ip",
         "target": "192.0.2.10",
         "decision_id": "decision-123",
-        "reason": "approved by scoped auto allowlist",
+        "reason": "approved by scoped [auto allowlist]",
         "parameters": {"ip": "192.0.2.10", "_expires_at": time.time() + 300},
     }
     signed = sign_envelope(queued, tenant_id="tenant-a", secret="secret")
