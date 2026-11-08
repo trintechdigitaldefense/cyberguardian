@@ -4,7 +4,7 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Latest R2 code commit with passing CI:** 4801175d1024a081383077c867d1a07303f002fa
+**Latest R2 code commit with passing CI:** 575e947db83a06b3eb08ac2b5ccdb70300df3ddf
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
@@ -12,7 +12,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
 - r2-1.6.0-security is 64 commits ahead of main, with no commits behind it.
-- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. Subsequent CI run on commit `4801175d1024a081383077c867d1a07303f002fa` passed all 44 tests and Docker smoke (Actions run [42516023607](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516023607)).
+- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. CI on commit `575e947db83a06b3eb08ac2b5ccdb70300df3ddf` passed Python 3.10/3.11/3.12, all 44 tests, compilation (including the new VM harness), and Docker API smoke (Actions run [42516186854](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516186854)).
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
@@ -65,7 +65,7 @@ R1 code and automated acceptance tests are complete. Real device provisioning an
 
 ### R2 — Complete containment and recovery safety (IN PROGRESS)
 
-**Latest verified code commit:** `4801175d1024a081383077c867d1a07303f002fa`; Actions run [42516023607](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516023607). Python 3.10/3.11/3.12 and Docker API smoke passed; 44 automated tests passed. This is CI evidence for mocked/unit and container tests, not privileged host-firewall integration.
+**Latest verified code commit:** `575e947db83a06b3eb08ac2b5ccdb70300df3ddf`; Actions run [42516186854](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42516186854). Python 3.10/3.11/3.12 and Docker API smoke passed; 44 automated tests passed. The namespace integration harness compiled in CI, but it has not yet been executed in a privileged disposable VM. This is not privileged host-firewall integration evidence.
 
 Implemented and covered by automated tests:
 - Process actions require command-line or start-time evidence; PID start-time mismatch, hint mismatch and unreadable proc identity fail closed.
@@ -84,6 +84,7 @@ Still required before R2 can be marked complete:
 - Exercise process termination against a controlled child process on supported kernels and document the minimum kernel/pidfd requirement; test unsupported-kernel fallback behaviour.
 - Add failure-injection coverage for partial rule application and marker-write failure; verify the host never reports success while isolation/rollback state is uncertain.
 - Re-run the full matrix against the latest branch head and attach the exact commit SHA and artifacts.
+- A disposable network-namespace integration harness is available at `scripts/test_containment_namespace.py`; follow `docs/CONTAINMENT_VM_TEST.md` and capture its output on a disposable Linux VM.
 - Never run destructive containment tests on a client or production host.
 
 ### R3 — Complete operator and service security
