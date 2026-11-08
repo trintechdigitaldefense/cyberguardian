@@ -10,6 +10,8 @@ import zlib
 from pathlib import Path
 
 from gateway_patches.agent_commands_audit import patch_source
+from gateway_patches.decision_service_auth import patch_source as patch_decision_auth
+from gateway_patches.cors_config import patch_source as patch_cors
 
 ROOT = Path(__file__).resolve().parent
 PARTS_DIR = ROOT / "gateway_z"
@@ -48,6 +50,8 @@ def main() -> None:
 
     try:
         source_text = patch_source(original_text)
+        source_text = patch_decision_auth(source_text)
+        source_text = patch_cors(source_text)
         source = source_text.encode("utf-8")
         ast.parse(source_text, filename="main_full.py")
     except (UnicodeError, SyntaxError, ValueError) as exc:
