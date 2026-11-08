@@ -61,8 +61,13 @@ def inside_namespace() -> int:
 
     nft_available = bool(shutil.which("nft"))
     iptables_available = bool(shutil.which("iptables") and shutil.which("ip6tables"))
+    force_iptables = os.environ.get("CG_FORCE_IPTABLES") == "1"
     if not nft_available and not iptables_available:
         fail("need nft, or both iptables and ip6tables")
+    if force_iptables and not iptables_available:
+        fail("CG_FORCE_IPTABLES=1 requires both iptables and ip6tables")
+    if force_iptables:
+        c._has_nft = lambda: False
 
     c._resolve_controller_ips = lambda _hint: [
         c.ipaddress.ip_address(CTRL_V4),
