@@ -257,7 +257,7 @@ def _nft_rule_present(chain: str, expression: List[str]) -> bool:
     rendered = _normalize_nft_rules(" ".join(expression))
     listing = _normalize_nft_rules(_nft_chain(chain))
     # Token boundaries matter: 192.0.2.1 must never match 192.0.2.10.
-    pattern = rf"(?<![\\w.:]){re.escape(rendered)}(?![\\w.:])"
+    pattern = rf"(?<![\w.:]){re.escape(rendered)}(?![\w.:])"
     return re.search(pattern, listing) is not None
 
 
