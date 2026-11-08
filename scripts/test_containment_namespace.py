@@ -68,14 +68,6 @@ def inside_namespace() -> int:
         fail("CG_FORCE_IPTABLES=1 requires both iptables and ip6tables")
     if force_iptables:
         c._has_nft = lambda: False
-        for tool in ("iptables", "ip6tables"):
-            print(f"DEBUG {tool} path={shutil.which(tool)} initial_output={c._run([tool, '-S', 'OUTPUT'])}", flush=True)
-            ready = c._iptables_ensure(tool)
-            print(f"DEBUG {tool} ensure={ready}", flush=True)
-            if not ready:
-                for chain in ("OUTPUT", c.IPT_OUTPUT, c.IPT_ISOLATE, c.IPT_BLOCK):
-                    print(f"DEBUG {tool} {chain}={c._run([tool, '-S', chain])}", flush=True)
-                fail(f"{tool} could not initialize in isolated namespace")
 
     c._resolve_controller_ips = lambda _hint: [
         c.ipaddress.ip_address(CTRL_V4),
