@@ -253,15 +253,22 @@ def _normalize_nft_rules(value: str) -> str:
     return normalized.replace("{ ", "{").replace(" }", "}").strip()
 
 
-def _nft_add_once(chain: str, expression: List[str]) -> bool:
+def _nft_rule_present(chain: str, expression: List[str]) -> bool:
     rendered = _normalize_nft_rules(" ".join(expression))
-    if rendered in _normalize_nft_rules(_nft_chain(chain)):
+    listing = _normalize_nft_rules(_nft_chain(chain))
+    # Token boundaries matter: 192.0.2.1 must never match 192.0.2.10.
+    pattern = rf"(?<![\\w.:]){re.escape(rendered)}(?![\\w.:])"
+    return re.search(pattern, listing) is not None
+
+
+def _nft_add_once(chain: str, expression: List[str]) -> bool:
+    if _nft_rule_present(chain, expression):
         return True
     rc, out, err = _run(["nft", "add", "rule", NFT_FAMILY, NFT_TABLE, chain, *expression], timeout=5)
     if rc != 0:
         return False
-    # Never treat table existence as proof that the requested rule is active.
-    return rendered in _normalize_nft_rules(_nft_chain(chain))
+    # Never treat table existence or a prefix/substring as proof that the rule is active.
+    return _nft_rule_present(chain, expression)
 
 def _nft_ensure() -> bool:
     if not _nft_exists("table", NFT_FAMILY, NFT_TABLE):
