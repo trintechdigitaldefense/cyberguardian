@@ -73,6 +73,8 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
     actions: List[ActionRequest] = []
     pb = match_playbook(det.title, det.tags)
     pid = str(det.indicators.get("pid") or det.indicators.get("process_id") or "")
+    cmdline_hint = str(det.indicators.get("cmdline_hint") or det.indicators.get("cmdline") or "")
+    expected_starttime = str(det.indicators.get("expected_starttime") or det.indicators.get("start_time") or "")
     if pb:
         for step in pb["steps"]:
             auto = bool(step.get("auto")) and PROTECTION_MODE
@@ -87,7 +89,11 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                     target=target,
                     reason=step.get("desc", ""),
                     auto_approved=auto and step["action"] != "escalate",
-                    parameters={"playbook": pb["id"]},
+                    parameters={
+                        "playbook": pb["id"],
+                        **({"cmdline_hint": cmdline_hint} if step["action"] == "kill_process" and cmdline_hint else {}),
+                        **({"expected_starttime": expected_starttime} if step["action"] == "kill_process" and expected_starttime else {}),
+                    },
                 )
             )
         return actions
@@ -108,6 +114,10 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                     target=pid,
                     reason="Terminate suspicious process",
                     auto_approved=PROTECTION_MODE,
+                    parameters={
+                        **({"cmdline_hint": cmdline_hint} if cmdline_hint else {}),
+                        **({"expected_starttime": expected_starttime} if expected_starttime else {}),
+                    },
                 )
             )
         actions.append(
