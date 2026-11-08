@@ -420,10 +420,14 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
             result["detail"] = "nft table/chain setup failed; isolation not applied"
             return result
         rules = [
-            ["ct", "state", "established,related", "accept"],
             ["oifname", "lo", "accept"],
-            ["udp", "dport", "53", "accept"],
-            ["tcp", "dport", "53", "accept"],
+            ["icmp", "type", "{", "destination-unreachable", ",", "time-exceeded", ",", "parameter-problem", "}", "accept"],
+            ["icmpv6", "type", "nd-neighbor-solicit", "accept"],
+            ["icmpv6", "type", "nd-neighbor-advert", "accept"],
+            ["icmpv6", "type", "destination-unreachable", "accept"],
+            ["icmpv6", "type", "packet-too-big", "accept"],
+            ["icmpv6", "type", "time-exceeded", "accept"],
+            ["icmpv6", "type", "parameter-problem", "accept"],
         ]
         for rule in rules:
             if not _nft_add_once(NFT_ISOLATE, rule):
@@ -457,14 +461,25 @@ def isolate_host(controller_hint: str = "") -> Dict[str, Any]:
                 _clear_iptables_isolation()
                 result["detail"] = f"failed to create CyberGuardian-owned chains with {tool}"
                 return result
-        allow_rules = [
-            ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-            ["-o", "lo", "-j", "ACCEPT"],
-            ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
-            ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
-        ]
+        allow_rules = {
+            tools[4]: [
+                ["-o", "lo", "-j", "ACCEPT"],
+                ["-p", "icmp", "--icmp-type", "destination-unreachable", "-j", "ACCEPT"],
+                ["-p", "icmp", "--icmp-type", "time-exceeded", "-j", "ACCEPT"],
+                ["-p", "icmp", "--icmp-type", "parameter-problem", "-j", "ACCEPT"],
+            ],
+            tools[6]: [
+                ["-o", "lo", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "neighbour-solicitation", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "neighbour-advertisement", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "destination-unreachable", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "packet-too-big", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "time-exceeded", "-j", "ACCEPT"],
+                ["-p", "ipv6-icmp", "--icmpv6-type", "parameter-problem", "-j", "ACCEPT"],
+            ],
+        }
         for tool in (tools[4], tools[6]):
-            for rule in allow_rules:
+            for rule in allow_rules[tool]:
                 if not _iptables_add_once(tool, IPT_ISOLATE, rule):
                     _clear_iptables_isolation()
                     result["detail"] = f"failed to add isolation allow rule with {tool}"
