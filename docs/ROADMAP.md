@@ -4,7 +4,7 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Current hardening branch head at review:** 786b6283562ddd98b601142e33c4624a13a85b50
+**Current hardening branch head at review:** d1ec90dd5840a3f310f01cae1d0080c9c9a1940d
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
 
@@ -12,9 +12,9 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 - main is at cf4832d1e36dd8139aaac3df7750386c482ff34b.
 - r2-1.6.0-security is 64 commits ahead of main, with no commits behind it.
-- R2 contains gateway assembly/checksum logic, a Docker assembly step, command-signature code, and a small unit-test addition.
+- R2 now includes process identity evidence propagation, PID/start-time validation, pidfd-bound signalling where supported, strict IP parsing, controller recovery allowlisting, dual-stack firewall handling, verified nftables rule activation, corrupt-marker fail-closed recovery, and human approval for disruptive playbook actions. A final exact-token nft rule-verification change is on the branch and awaiting its own CI run.
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
-- Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are now confirmed tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
+- Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
 - R2-R5 remain open. The product is not production-ready; dashboard/service authentication, containment, queue reliability, audit/reporting and supervised pilot acceptance still need completion.
 
@@ -63,11 +63,27 @@ This is a cross-cutting gate, not a replacement for the eight product phases.
 
 R1 code and automated acceptance tests are complete. Real device provisioning and field verification remain part of R5 pilot acceptance.
 
-### R2 — Complete containment and recovery safety
+### R2 — Complete containment and recovery safety (IN PROGRESS)
 
-- Test only in disposable VMs or mocks; never use production hosts for destructive tests.
-- Verify PID reuse protection, process-hint mismatch rejection, IP parsing, controller allowlisting, dedicated firewall rules, IPv4/IPv6 behaviour, and exact rollback.
-- Verify rollback only reports success after firewall state is restored and checked.
+**Latest verified test baseline:** commit `70368f0dd173eabda32323adf493145c6c5ddd47`; Actions run [42515663633](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42515663633). Python 3.10/3.11/3.12 and Docker API smoke passed; 35 automated tests passed. The branch has since received an additional exact-token nft rule-verification fix and regression test; CI for the newer head must pass before this section is advanced.
+
+Implemented and covered by automated tests:
+- Process actions require command-line or start-time evidence; PID start-time mismatch, hint mismatch and unreadable proc identity fail closed.
+- Agent inventory captures process start time and the decision service passes that identity evidence to the kill action.
+- pidfd-bound signalling is used where supported; tests exercise the pidfd path.
+- IP parsing rejects invalid, loopback, unspecified, multicast and link-local targets.
+- Isolation refuses to proceed without a resolvable controller recovery address.
+- nftables and iptables fallback paths include controller recovery allowlisting and dual-stack handling; isolation does not grant general DNS or established-session egress.
+- Firewall rules are checked after insertion; rollback retains markers if the recorded backend is unavailable or state markers are corrupt.
+- Disruptive playbook actions (kill, isolate, block) remain human-approved. An arbitrary `allowlist_id` string is not accepted as authorization; a real tenant-scoped policy/approval service is required before any automatic disruptive allowlisting is introduced.
+
+Still required before R2 can be marked complete:
+- Run privileged integration tests in disposable Linux VMs for nftables and iptables/ip6tables; verify actual rule ordering, controller connectivity, IPv4 and IPv6 traffic, and restoration after normal and interrupted runs.
+- Verify rollback leaves unrelated host firewall rules untouched, including pre-existing tables/chains and duplicate jumps.
+- Exercise process termination against a controlled child process on supported kernels and document the minimum kernel/pidfd requirement; test unsupported-kernel fallback behaviour.
+- Add failure-injection coverage for partial rule application and marker-write failure; verify the host never reports success while isolation/rollback state is uncertain.
+- Re-run the full matrix against the latest branch head and attach the exact commit SHA and artifacts.
+- Never run destructive containment tests on a client or production host.
 
 ### R3 — Complete operator and service security
 
