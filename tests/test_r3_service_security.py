@@ -9,8 +9,6 @@ API_DIR = ROOT / "control-plane" / "api"
 DECISION_DIR = ROOT / "control-plane" / "decision-service"
 DASHBOARD_DIR = ROOT / "dashboard"
 sys.path.insert(0, str(API_DIR))
-sys.path.insert(0, str(DECISION_DIR))
-sys.path.insert(0, str(DASHBOARD_DIR))
 
 from gateway_patches.decision_service_auth import patch_source as patch_decision_auth
 from gateway_patches.cors_config import patch_source as patch_cors
@@ -73,13 +71,17 @@ def test_gateway_cors_patch_fails_closed_on_source_drift():
 
 
 def _load_decision_module():
-    spec = importlib.util.spec_from_file_location(
-        "cg_decision_auth_test_module", DECISION_DIR / "main.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    sys.path.insert(0, str(DECISION_DIR))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "cg_decision_auth_test_module", DECISION_DIR / "main.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(DECISION_DIR))
 
 
 def test_decision_service_rejects_missing_and_wrong_service_key(monkeypatch):
