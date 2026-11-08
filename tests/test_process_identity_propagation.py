@@ -63,3 +63,55 @@ def test_decision_engine_propagates_process_identity_to_kill_action():
     assert kill.target == "4321"
     assert kill.parameters["cmdline_hint"] == "python worker.py"
     assert kill.parameters["expected_starttime"] == "987654"
+
+def test_playbook_disruptive_actions_require_human_approval_by_default():
+    decision = _load_decision()
+    decision.PROTECTION_MODE = True
+    detection = decision.Detection(
+        asset_id="host-1",
+        severity=decision.Severity.CRITICAL,
+        title="mimikatz credential dumping",
+        tags=["mimikatz"],
+        indicators={
+            "pid": "4321",
+            "cmdline_hint": "mimikatz.exe",
+            "expected_starttime": "987654",
+        },
+    )
+    actions = decision.plan_actions(detection)
+    disruptive = [
+        action for action in actions
+        if action.action in {
+            decision.ActionType.KILL_PROCESS,
+            decision.ActionType.ISOLATE_HOST,
+            decision.ActionType.BLOCK_IP,
+        }
+    ]
+    assert disruptive
+    assert all(not action.auto_approved for action in disruptive)
+
+
+def test_playbook_auto_action_requires_explicit_allowlist_reference():
+    decision = _load_decision()
+    decision.PROTECTION_MODE = True
+    step = decision.PLAYBOOKS["credential_theft"]["steps"][1]
+    step["allowlist_id"] = "customer-approved-allowlist-1"
+    detection = decision.Detection(
+        asset_id="host-1",
+        severity=decision.Severity.CRITICAL,
+        title="mimikatz credential dumping",
+        tags=["mimikatz"],
+        indicators={
+            "pid": "4321",
+            "cmdline_hint": "mimikatz.exe",
+            "expected_starttime": "987654",
+        },
+    )
+    kill = next(
+        action for action in decision.plan_actions(detection)
+        if action.action == decision.ActionType.KILL_PROCESS
+    )
+    assert kill.auto_approved
+    assert "[auto allowlist]" in kill.reason
+    assert kill.parameters["allowlist_id"] == "customer-approved-allowlist-1"
+
