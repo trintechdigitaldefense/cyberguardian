@@ -19,6 +19,17 @@ def _state_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "BLOCK_MARKER", tmp_path / "blocked_ips.json")
 
 
+
+def test_missing_state_marker_uses_clean_first_run_default(tmp_path):
+    marker = tmp_path / "new-state.json"
+    assert c._read_json(marker, {"ips": {}}) == {"ips": {}}
+
+
+def test_corrupt_state_marker_is_not_treated_as_missing(tmp_path):
+    marker = tmp_path / "corrupt-state.json"
+    marker.write_text("{invalid")
+    assert c._read_json(marker, {}) == {"_invalid_marker": True}
+
 def test_kill_process_requires_process_identity(monkeypatch):
     monkeypatch.setattr(c, "_proc_identity", lambda pid: {
         "start_time": "123", "state": "S", "cmdline": "python worker.py"
