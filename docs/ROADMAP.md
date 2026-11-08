@@ -35,7 +35,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 
 This is a cross-cutting gate, not a replacement for the eight product phases.
 
-### R0 — Recover and stabilise the R2 branch (<escape>COMPLETED</escape>)
+### R0 — Recover and stabilise the R2 branch (COMPLETED)
 
 1. Reproduce the latest R2 CI failure locally and in GitHub Actions.
 2. Fix gateway packaging so committed source fragments, assembler, and expected SHA-256 all refer to the same exact gateway artifact. Remove stale or competing chunk formats from the active build path.
