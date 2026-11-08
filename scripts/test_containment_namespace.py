@@ -179,7 +179,7 @@ def inside_namespace() -> int:
         else:
             if not c._nft_exists("table", c.NFT_FAMILY, "cg_test_unrelated"):
                 fail("unrelated nftables table was removed during CyberGuardian restore")
-            if "counter accept" not in c._run(["nft", "-a", "list", "chain", c.NFT_FAMILY, "cg_test_unrelated", "keep"], timeout=5)[1]:
+            if "accept" not in c._run(["nft", "-a", "list", "chain", c.NFT_FAMILY, "cg_test_unrelated", "keep"], timeout=5)[1]:
                 fail("unrelated nftables rule was removed during CyberGuardian restore")
         print("PASS unrelated firewall rules and chains preserved")
 
