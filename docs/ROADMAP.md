@@ -4,8 +4,9 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Latest R3 validation commit:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807`  
-**R3 CI evidence:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed; Python 3.10/3.11/3.12, Docker API smoke, and both containment integration jobs passed.
+**Latest branch head validated by CI:** `47b48ea442cffce68e3f15d5ea823f589bb19d64`  
+**Latest CI evidence:** [run 42518123281](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518123281) — all five jobs passed: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration (nftables + iptables in disposable network namespaces).  
+**R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed; latest head validation above also confirms the full workflow remains green.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
