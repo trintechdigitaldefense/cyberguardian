@@ -22,3 +22,9 @@ nohup.out
 /tmp/
 *.log
 .DS_Store
+
+data/agent_credentials.json
+data/agent_fingerprints.json
+data/false_positives.json
+data/auto_allowlist.json
+data/sentinel_bridge.json
