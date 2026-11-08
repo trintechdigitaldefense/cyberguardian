@@ -96,7 +96,7 @@ def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
         return value if isinstance(value, dict) else dict(default)
     except (OSError, ValueError):
-        return dict(default)
+        return {"_invalid_marker": True}
 
 
 def _proc_identity(pid: int) -> Optional[Dict[str, str]]:
@@ -351,6 +351,8 @@ def _iptables_add_once(tool: str, chain: str, args: List[str]) -> bool:
 
 def _record_block(address: ipaddress._BaseAddress, backend: str) -> None:
     data = _read_json(BLOCK_MARKER, {"ips": {}})
+    if data.get("_invalid_marker") or not isinstance(data.get("ips"), dict):
+        data = {"ips": {}}
     data.setdefault("ips", {})[str(address)] = {"version": address.version, "backend": backend, "ts": time.time()}
     _write_json_atomic(BLOCK_MARKER, data)
 
@@ -558,10 +560,13 @@ def restore_network() -> Dict[str, Any]:
     failures = []
     isolation_record = _read_json(ISOLATE_MARKER, {})
     block_record = _read_json(BLOCK_MARKER, {"ips": {}})
+    if isolation_record.get("_invalid_marker") or block_record.get("_invalid_marker"):
+        failures.append("containment state marker is corrupt; refusing to claim verified restoration")
+    blocked_ips = block_record.get("ips") if isinstance(block_record.get("ips"), dict) else {}
     recorded_backends = {str(isolation_record.get("backend") or "")}
     recorded_backends.update(
         str(item.get("backend") or "")
-        for item in (block_record.get("ips") or {}).values()
+        for item in blocked_ips.values()
         if isinstance(item, dict)
     )
     if "nft" in recorded_backends and not _has_nft():
