@@ -25,19 +25,6 @@ jobs:
         run: |
           python control-plane/api/assemble_main.py
           test -s control-plane/api/main_full.py
-      - name: Inspect decision service client call sites
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          lines = Path("control-plane/api/main_full.py").read_text().splitlines()
-          needles = ("DECISION_URL", "/v1/decide", "/v1/protection", "decision-service")
-          for i, line in enumerate(lines):
-              if any(term in line for term in needles):
-                  lo, hi = max(0, i - 3), min(len(lines), i + 5)
-                  print(f"--- source lines {lo + 1}-{hi} ---")
-                  for n in range(lo, hi):
-                      print(f"{n + 1}: {lines[n]}")
-          PY
       - name: Run automated tests
         run: python -m pytest tests/ -q --tb=short
       - name: Compile application modules
