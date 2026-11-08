@@ -4,9 +4,9 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-08  
-**Latest branch head validated by CI:** `47b48ea442cffce68e3f15d5ea823f589bb19d64`  
-**Latest CI evidence:** [run 42518123281](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518123281) — all five jobs passed: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration (nftables + iptables in disposable network namespaces).  
-**R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed; latest head validation above also confirms the full workflow remains green.
+**Latest branch commit:** `30e657bea4c419bf0d8d6f2900a5f4d1eb257df9` (R3 security design baseline; CI pending).  
+**Latest completed CI:** [run 42518629698](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518629698) — all five jobs passed on commit `268cdeee3909be07bcaba3209a57f4ca52be59ac`: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration (nftables + iptables in disposable network namespaces).  
+**R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
 This roadmap preserves the original eight product phases and adds a release-readiness gate. A phase is not complete merely because a module or documentation entry exists: completion requires code on GitHub, tests passing against the same commit, and evidence for the phase acceptance criteria.
@@ -87,8 +87,7 @@ Remaining environment-specific validation is part of R5: repeat the supervised c
 
 ### R3 — Complete operator and service security (IN PROGRESS)
 
-**Latest validated branch commit:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807`  
-**CI:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed on Python 3.10/3.11/3.12; Docker API smoke and both containment integration jobs passed.
+**Latest completed code CI:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed on Python 3.10/3.11/3.12; Docker API smoke and both containment integration jobs passed. The latest completed full workflow on the branch is [run 42518629698](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518629698), passing all five jobs on `268cdeee3909be07bcaba3209a57f4ca52be59ac`.
 
 Implemented and covered so far:
 - Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
@@ -101,8 +100,10 @@ Implemented and covered so far:
 - Compose keeps decision service on the private Docker network, binds API/dashboard host ports to localhost, and requires deployment secrets. A safe .env.example and deployment guidance are committed.
 - R3 tests now cover login/session/CSRF/role flows, service-key rejection, fail-closed configuration, CORS patch behaviour and source-drift failures.
 
+Operator identity and service authorization design baseline: [docs/R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md](R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md). This is a specification only; implementation and acceptance tests are not yet complete.
+
 Still required before R3 can be marked complete:
-1. Add operator identity/actor attribution to gateway audit events for dashboard actions. The dashboard currently authenticates the operator locally but sends a shared gateway API key; audit records must preserve the authenticated username, role, tenant, action, approval and command correlation without trusting client-supplied actor headers.
+1. Implement signed operator identity assertions and bind verified identity to gateway audit events for dashboard actions. The dashboard currently authenticates the operator locally but sends a shared gateway API key; audit records must preserve the authenticated username, role, tenant, action, approval and command correlation without trusting client-supplied actor headers.
 2. Enforce least privilege end-to-end. Define service identities/scopes for dashboard, NAD processor, API gateway and decision service; avoid giving dashboard a general admin API key. Add negative tests proving each service cannot call unrelated admin/agent endpoints.
 3. Audit every dashboard route and frontend action: ensure every state-changing operation requires CSRF and correct role, and every API proxy call carries the authenticated tenant. Add cross-tenant isolation tests, including object-ID substitution and audit/report endpoints.
 4. Review login throttling against reverse-proxy deployments. Trust forwarded client IP only from configured trusted proxies; add a global/account-only throttle resilient to rotating source IPs and a bounded cleanup/retention strategy for the attempts table.
