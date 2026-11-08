@@ -269,3 +269,70 @@ def test_restore_retains_marker_if_recorded_backend_is_missing(monkeypatch, tmp_
     assert not result["ok"]
     assert "backend unavailable" in result["detail"]
     assert c.ISOLATE_MARKER.exists()
+
+def test_block_ip_refuses_corrupt_marker_before_installing_rule(monkeypatch):
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_read_json", lambda path, default: {"_invalid_marker": True})
+    monkeypatch.setattr(c, "_nft_ensure", lambda: (_ for _ in ()).throw(AssertionError("must not touch firewall")))
+    result = c.block_ip("192.0.2.44")
+    assert not result["ok"]
+    assert "corrupt" in result["detail"]
+
+
+def test_block_ip_persists_pending_marker_if_active_update_fails(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_nft_ensure", lambda: True)
+    monkeypatch.setattr(c, "_nft_rule_present", lambda chain, expr: True)
+    real_write = c._write_json_atomic
+    calls = {"count": 0}
+    def write(path, value):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("simulated disk full")
+        real_write(path, value)
+    monkeypatch.setattr(c, "_write_json_atomic", write)
+    result = c.block_ip("192.0.2.45")
+    assert not result["ok"]
+    marker = json.loads(c.BLOCK_MARKER.read_text())
+    assert marker["ips"]["192.0.2.45"]["status"] == "pending"
+    assert "pending recovery marker retained" in result["detail"]
+
+
+def test_isolate_host_refuses_to_apply_rules_without_recovery_marker(monkeypatch):
+    monkeypatch.setattr(c, "_resolve_controller_ips", lambda hint: [ipaddress.ip_address("192.0.2.10")])
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_nft_ensure", lambda: True)
+    monkeypatch.setattr(c, "_write_json_atomic", lambda path, value: (_ for _ in ()).throw(OSError("read-only state dir")))
+    monkeypatch.setattr(c, "_nft_add_once", lambda chain, expr: (_ for _ in ()).throw(AssertionError("must not apply isolation rules")))
+    result = c.isolate_host("https://controller.example:8080")
+    assert not result["ok"]
+    assert "no isolation rules applied" in result["detail"]
+
+
+def test_isolate_host_retains_pending_marker_if_active_write_fails(monkeypatch, tmp_path):
+    _state_paths(tmp_path, monkeypatch)
+    controller = ipaddress.ip_address("192.0.2.10")
+    monkeypatch.setattr(c, "_resolve_controller_ips", lambda hint: [controller])
+    monkeypatch.setattr(c, "_is_root", lambda: True)
+    monkeypatch.setattr(c, "_has_nft", lambda: True)
+    monkeypatch.setattr(c, "_nft_ensure", lambda: True)
+    monkeypatch.setattr(c, "_nft_add_once", lambda chain, expr: True)
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: "ip daddr 192.0.2.10 accept\\ndrop")
+    real_write = c._write_json_atomic
+    calls = {"count": 0}
+    def write(path, value):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("simulated disk full")
+        real_write(path, value)
+    monkeypatch.setattr(c, "_write_json_atomic", write)
+    result = c.isolate_host("https://controller.example:8080")
+    assert not result["ok"]
+    marker = json.loads(c.ISOLATE_MARKER.read_text())
+    assert marker["status"] == "pending"
+    assert "pending recovery marker retained" in result["detail"]
+
