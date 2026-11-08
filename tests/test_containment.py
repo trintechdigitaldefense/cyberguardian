@@ -126,6 +126,24 @@ def test_nft_isolation_has_controller_allow_and_final_drop(monkeypatch, tmp_path
     assert marker["status"] == "active"
 
 
+
+def test_nft_rule_is_not_success_until_rule_is_visible(monkeypatch):
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: "")
+    monkeypatch.setattr(c, "_run", lambda args, timeout=8: (0, "", ""))
+    assert not c._nft_add_once(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.1", "drop"])
+
+
+def test_nft_existing_rule_is_detected_with_normalized_format(monkeypatch):
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: "ip daddr 192.0.2.1 drop")
+    monkeypatch.setattr(c, "_run", lambda args, timeout=8: (_ for _ in ()).throw(AssertionError("duplicate rule add")))
+    assert c._nft_add_once(c.NFT_BLOCK, ["ip", "daddr", "192.0.2.1", "drop"])
+
+
+def test_nft_ensure_rejects_foreign_or_wrong_hook_base_chain(monkeypatch):
+    monkeypatch.setattr(c, "_nft_exists", lambda kind, *names: True)
+    monkeypatch.setattr(c, "_nft_chain", lambda chain: "type filter hook input priority 0; policy accept;")
+    assert not c._nft_ensure()
+
 def test_restore_without_root_retains_markers(monkeypatch, tmp_path):
     _state_paths(tmp_path, monkeypatch)
     c.ISOLATE_MARKER.write_text("{}")
