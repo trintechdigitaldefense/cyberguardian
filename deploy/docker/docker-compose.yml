@@ -2,29 +2,46 @@ version: "3.9"
 services:
   decision-service:
     build: ../../control-plane/decision-service
-    ports: ["8001:8001"]
+    expose: ["8001"]
+    environment:
+      CG_PRODUCTION: ${CG_PRODUCTION:-1}
+      DECISION_SERVICE_API_KEY: ${DECISION_SERVICE_API_KEY:?set DECISION_SERVICE_API_KEY in the deployment environment}
+    networks: [cg-backend]
   api:
     build: ../../control-plane/api
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     environment:
       DECISION_SERVICE_URL: http://decision-service:8001
-      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+      DECISION_SERVICE_API_KEY: ${DECISION_SERVICE_API_KEY:?set DECISION_SERVICE_API_KEY in the deployment environment}
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
       CG_DATA_DIR: /app/data
-      CG_PRODUCTION: ${CG_PRODUCTION:-0}
-      CG_REQUIRE_AGENT_IDENTITY: ${CG_REQUIRE_AGENT_IDENTITY:-0}
+      CG_PRODUCTION: ${CG_PRODUCTION:-1}
+      CG_REQUIRE_AGENT_IDENTITY: ${CG_REQUIRE_AGENT_IDENTITY:-1}
     volumes:
       - ${CG_DATA_HOST_DIR:-../../data}:/app/data
     depends_on: [decision-service]
+    networks: [cg-backend]
   nad-processor:
     build: ../../control-plane/nad-processor
     environment:
       API_URL: http://api:8080
-      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
     depends_on: [api]
+    networks: [cg-backend]
   dashboard:
     build: ../../dashboard
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     environment:
       API_URL: http://api:8080
-      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:-}
+      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
+      CG_DATA_DIR: /app/data
+      CG_PRODUCTION: ${CG_PRODUCTION:-1}
+      CG_COOKIE_SECURE: ${CG_COOKIE_SECURE:-1}
+    volumes:
+      - ${CG_DATA_HOST_DIR:-../../data}:/app/data
     depends_on: [api]
+    networks: [cg-backend]
+
+networks:
+  cg-backend:
+    driver: bridge
