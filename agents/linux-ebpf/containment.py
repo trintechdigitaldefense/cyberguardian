@@ -101,23 +101,27 @@ def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
 def _proc_identity(pid: int) -> Optional[Dict[str, str]]:
     """Read Linux proc identity. starttime is field 22 and survives PID reuse."""
     proc = Path(f"/proc/{pid}")
-    try:
-        stat_text = (proc / "stat").read_text(encoding="utf-8")
-        close = stat_text.rfind(")")
-        if close < 0:
-            return None
-        fields = stat_text[close + 2 :].split()
-        if len(fields) <= 19:
-            return None
-        start_time = fields[19]
-        state = fields[0]
-        cmdline = (proc / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace").strip()
-        if not cmdline:
-            cmdline = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
-        return {"start_time": start_time, "state": state, "cmdline": cmdline}
-    except (OSError, ValueError, IndexError):
+    if not proc.exists():
         return None
-
+    stat_text = (proc / "stat").read_text(encoding="utf-8")
+    close = stat_text.rfind(")")
+    if close < 0:
+        raise ValueError("invalid /proc stat record")
+    fields = stat_text[close + 2 :].split()
+    if len(fields) <= 19:
+        raise ValueError("incomplete /proc stat record")
+    start_time = fields[19]
+    state = fields[0]
+    try:
+        cmdline = (proc / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace").strip()
+    except OSError:
+        cmdline = ""
+    if not cmdline:
+        try:
+            cmdline = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            cmdline = ""
+    return {"start_time": start_time, "state": state, "cmdline": cmdline}
 
 def _pidfd_exited(pidfd: int) -> bool:
     poller = select.poll()
@@ -155,7 +159,11 @@ def kill_process(
         result["detail"] = "refusing system pid or self"
         return result
 
-    identity = _proc_identity(pid_num)
+    try:
+        identity = _proc_identity(pid_num)
+    except (OSError, ValueError) as exc:
+        result["detail"] = f"unable to verify process identity: {exc}"
+        return result
     if identity is None or identity["state"] == "Z":
         result["ok"] = True
         result["detail"] = "process already gone"
