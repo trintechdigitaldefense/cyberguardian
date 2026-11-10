@@ -159,67 +159,77 @@ class OfflineQueue:
             return len(self._read_records())
 
     def flush(self, post_fn: Callable, *, now: Optional[float] = None, limit: int = 50) -> Dict[str, Any]:
+        """Deliver outside the file lock, then reconcile acknowledgements atomically.
+
+        This keeps telemetry enqueue responsive during slow network calls. Concurrent
+        flushers may deliver the same item (at-least-once semantics); receivers should
+        deduplicate using the stable record ID carried in the payload/header.
+        """
         current = time.time() if now is None else float(now)
-        # Only one flusher may deliver a given snapshot at a time. Enqueue
-        # operations use a different lock and are never held behind network IO.
-        with self._locked(self.flush_lock_path):
-            with self._locked():
-                snapshot = self._read_records()
-            if not snapshot:
-                with self._locked():
-                    self._write_status("online", 0)
-                return {"flushed": 0, "failed": 0, "remaining": 0, "deferred": 0}
-
-            acknowledged = set()
-            updated = {}
-            failed = deferred = attempted = flushed = 0
-            for record in snapshot:
-                if attempted >= max(1, int(limit)):
-                    deferred += 1
-                    continue
-                if float(record.get("next_attempt_at") or 0) > current:
-                    deferred += 1
-                    continue
-                attempted += 1
-                try:
-                    if "_corrupt_line" in record:
-                        raise ValueError("corrupt queue record retained for operator inspection")
-                    ok, _response = post_fn(record["path"], record["payload"])
-                    if not ok:
-                        raise RuntimeError("delivery callback did not acknowledge the record")
-                    acknowledged.add(record["id"])
-                    flushed += 1
-                except Exception as exc:
-                    retry_record = dict(record)
-                    attempts = int(retry_record.get("attempts") or 0) + 1
-                    retry_record["attempts"] = attempts
-                    retry_record["last_error"] = str(exc)[:500]
-                    delay = min(MAX_BACKOFF_SECONDS, BASE_BACKOFF_SECONDS * (2 ** min(attempts - 1, 10)))
-                    retry_record["next_attempt_at"] = current + delay
-                    updated[record["id"]] = retry_record
-                    failed += 1
-
-            # Re-read under the enqueue lock and reconcile by stable ID. New
-            # records accepted during delivery remain untouched.
+        with self._locked():
+            snapshot = self._read_records()
+        if not snapshot:
             with self._locked():
                 latest = self._read_records()
-                kept = []
-                for record in latest:
-                    record_id = record.get("id")
-                    if record_id in acknowledged:
-                        continue
-                    kept.append(updated.get(record_id, record))
-                self._atomic_write(kept)
-                self._write_status(
-                    "online" if not kept else "degraded",
-                    len(kept),
-                    last_flush_at=current,
-                    last_flush_acknowledged=flushed,
-                )
+                if not latest:
+                    self._write_status("online", 0)
+                    return {"flushed": 0, "failed": 0, "remaining": 0, "deferred": 0}
+                snapshot = latest
+
+        selected = []
+        deferred = 0
+        for record in snapshot:
+            if len(selected) >= max(1, int(limit)):
+                deferred += 1
+            elif float(record.get("next_attempt_at") or 0) > current:
+                deferred += 1
+            else:
+                selected.append(record)
+
+        outcomes = {}
+        flushed = failed = 0
+        for record in selected:
+            record_id = str(record.get("id") or "")
+            try:
+                if "_corrupt_line" in record:
+                    raise ValueError("corrupt queue record retained for operator inspection")
+                ok, _response = post_fn(record["path"], record["payload"])
+                if not ok:
+                    raise RuntimeError("delivery callback did not acknowledge the record")
+                outcomes[record_id] = ("ack", None)
+                flushed += 1
+            except Exception as exc:
+                outcomes[record_id] = ("retry", str(exc)[:500])
+                failed += 1
+
+        with self._locked():
+            latest = self._read_records()
+            reconciled = []
+            for record in latest:
+                outcome = outcomes.get(str(record.get("id") or ""))
+                if outcome is None:
+                    reconciled.append(record)
+                    continue
+                state, error = outcome
+                if state == "ack":
+                    continue
+                attempts = int(record.get("attempts") or 0) + 1
+                record["attempts"] = attempts
+                record["last_error"] = error
+                delay = min(MAX_BACKOFF_SECONDS, BASE_BACKOFF_SECONDS * (2 ** min(attempts - 1, 10)))
+                record["next_attempt_at"] = current + delay
+                reconciled.append(record)
+            self._atomic_write(reconciled)
+            self._write_status(
+                "online" if not reconciled else "degraded",
+                len(reconciled),
+                last_flush_at=current,
+                last_flush_acknowledged=flushed,
+            )
             return {
                 "flushed": flushed,
                 "failed": failed,
-                "remaining": len(kept),
+                "remaining": len(reconciled),
                 "deferred": deferred,
             }
 
