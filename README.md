@@ -74,14 +74,14 @@ SSH tunnel if remote: `ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 user@ho
 
 ## Hardened Docker Compose deployment
 
-Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash, administrator and lab-bootstrap keys, and distinct dashboard, NAD, operator-assertion and decision-service secrets plus a separate HMAC audit-checkpoint key into the ignored `data/credentials.json` file. Copy the generated service values into a private `deploy/docker/.env` file:
+Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash, administrator and lab-bootstrap keys, and distinct dashboard, NAD, operator-assertion and decision-service secrets plus a separate HMAC audit-checkpoint key into the ignored `data/credentials.json` file. Secret values are intentionally not printed. For Compose, provision each value from this protected file directly into an approved secret manager or a private deployment environment; never paste secrets into chat, tickets, screenshots or Git. The environment file format is:
 
 ```bash
-CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
-CG_DASHBOARD_API_KEY=<the distinct dashboard key printed by setup_credentials.sh>
-CG_NAD_API_KEY=<the distinct NAD key printed by setup_credentials.sh>
-CG_OPERATOR_ASSERTION_SECRET=<the distinct operator secret printed by setup_credentials.sh>
-DECISION_SERVICE_API_KEY=<the distinct decision-service key printed by setup_credentials.sh>
+CYBERGUARDIAN_API_KEY=<load securely from data/credentials.json: api_key>
+CG_DASHBOARD_API_KEY=<load securely from data/credentials.json: dashboard_api_key>
+CG_NAD_API_KEY=<load securely from data/credentials.json: nad_api_key>
+CG_OPERATOR_ASSERTION_SECRET=<load securely from data/credentials.json: operator_assertion_secret>
+DECISION_SERVICE_API_KEY=<load securely from data/credentials.json: decision_service_api_key>
 CG_PRODUCTION=1
 CG_REQUIRE_AGENT_IDENTITY=1
 CG_COOKIE_SECURE=1
