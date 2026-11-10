@@ -117,3 +117,53 @@ def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+
+
+def export_verified_ledger(source: Path, destination: Path) -> dict[str, Any]:
+    """Copy a verified, consistent ledger snapshot to a protected destination."""
+    source = Path(source)
+    destination = Path(destination)
+    if source.resolve() == destination.resolve():
+        raise ValueError("audit export destination must differ from source")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = source.with_name(source.name + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_SH)
+        status = _verify_ledger_unlocked(source)
+        if not status["valid"]:
+            raise LedgerIntegrityError(status["error"])
+        payload = source.read_bytes() if source.exists() else b""
+        digest = hashlib.sha256(payload).hexdigest()
+        fd, temp_name = tempfile.mkstemp(prefix=destination.name + ".", suffix=".tmp",
+                                         dir=str(destination.parent))
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, destination)
+            os.chmod(destination, 0o600)
+            dir_fd = os.open(str(destination.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+        return {
+            "source": str(source),
+            "destination": str(destination),
+            "records": status["records"],
+            "head": status["head"],
+            "sha256": digest,
+            "bytes": len(payload),
+        }
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
