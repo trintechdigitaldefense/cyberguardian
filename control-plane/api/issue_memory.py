@@ -445,7 +445,7 @@ def export_archived_issues(destination: Path, tenant_id: str) -> Dict[str, Any]:
             raise FileExistsError(destination)
         records = list_archived_issues(limit=MAX_ARCHIVED_ISSUES, tenant_id=tenant)
         encoded = b"".join(
-            json.dumps(item, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\\n"
+            json.dumps(item, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
             for item in records
         )
         fd, temp_name = tempfile.mkstemp(
