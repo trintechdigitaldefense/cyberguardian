@@ -5,6 +5,9 @@ import importlib.util
 import hashlib
 import hmac
 import json
+import fcntl
+from datetime import datetime, timezone
+import audit_ledger as _audit_ledger
 import logging
 import os
 import re
@@ -53,7 +56,141 @@ _mod = importlib.util.module_from_spec(_spec)
 sys.modules["cg_api_main"] = _mod
 _spec.loader.exec_module(_mod)
 import issue_memory as _issue_memory
+
 app = _mod.app
+
+
+def _parse_audit_window(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("report window timestamps must be ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("report window timestamps must include an explicit timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _historical_audit_tenant(fields: dict, tenant_id: str) -> str | None:
+    explicit = fields.get("tenant_id")
+    if explicit is not None:
+        return str(explicit) if str(explicit) == tenant_id else None
+    detail = str(fields.get("detail") or "")
+    marker = detail.rfind("{")
+    if marker >= 0:
+        try:
+            context = json.loads(detail[marker:])
+        except (ValueError, TypeError):
+            context = {}
+        candidate = context.get("tenant_id") if isinstance(context, dict) else None
+        if candidate is not None:
+            return str(candidate) if str(candidate) == tenant_id else None
+    asset_id = str(fields.get("asset_id") or "")
+    if asset_id and _asset_matches_tenant(asset_id, tenant_id):
+        return tenant_id
+    pending_id = str(fields.get("pending_action_id") or fields.get("id") or "")
+    if pending_id and _pending_action_matches_tenant(pending_id, tenant_id):
+        return tenant_id
+    return None
+
+
+@app.get("/v1/audit/history")
+async def historical_audit(
+    request: Request,
+    start: str,
+    end: str,
+    tenant_id: str = "",
+    limit: int = 500,
+    offset: int = 0,
+    snapshot_head: str = "",
+):
+    """Read a verified, tenant-scoped, stable page of historical audit events."""
+    tenant_id = str(tenant_id or getattr(request.state, "tenant_id", "") or "").strip()
+    if not tenant_id:
+        return JSONResponse({"detail": "verified tenant context is required"}, status_code=403)
+    try:
+        start_at = _parse_audit_window(start)
+        end_at = _parse_audit_window(end)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    if end_at <= start_at:
+        return JSONResponse({"detail": "report end must be later than report start"}, status_code=422)
+    if (end_at - start_at).total_seconds() > 3660 * 86400:
+        return JSONResponse({"detail": "historical report window exceeds the 10-year maximum"}, status_code=422)
+    if not 1 <= limit <= 500 or not 0 <= offset <= 50000:
+        return JSONResponse({"detail": "invalid historical audit pagination"}, status_code=422)
+
+    ledger_path = Path(_AUDIT_LEDGER_PATH)
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = _audit_ledger._open_lock(
+            ledger_path.with_name(ledger_path.name + ".lock"), fcntl.LOCK_SH
+        )
+        try:
+            integrity = _audit_ledger._verify_ledger_unlocked(ledger_path)
+            if not integrity.get("valid"):
+                return JSONResponse({"detail": "audit history integrity verification failed"}, status_code=503)
+            records = []
+            if ledger_path.exists():
+                with ledger_path.open("r", encoding="utf-8") as handle:
+                    records = [json.loads(line) for line in handle if line.endswith("\n")]
+            pinned_head = str(snapshot_head or integrity.get("head") or _audit_ledger.GENESIS)
+            if pinned_head == _audit_ledger.GENESIS:
+                records = []
+            else:
+                matching = next((index for index, item in enumerate(records) if item.get("hash") == pinned_head), None)
+                if matching is None:
+                    return JSONResponse({"detail": "historical audit snapshot is no longer available"}, status_code=409)
+                records = records[:matching + 1]
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        _logger.exception("historical audit read failed")
+        return JSONResponse({"detail": "historical audit source is unavailable or invalid"}, status_code=503)
+
+    matching_items = []
+    for record in records:
+        try:
+            recorded_at = float(record["recorded_at"])
+            event_at = datetime.fromtimestamp(recorded_at, timezone.utc)
+            if not (start_at <= event_at < end_at):
+                continue
+            envelope = record.get("event")
+            fields = envelope.get("fields") if isinstance(envelope, dict) else None
+            if not isinstance(fields, dict):
+                continue
+            scoped_tenant = _historical_audit_tenant(fields, tenant_id)
+            if scoped_tenant != tenant_id:
+                continue
+            matching_items.append({
+                "source_record_id": str(record.get("event_id") or ""),
+                "timestamp": event_at.isoformat().replace("+00:00", "Z"),
+                "event": str(fields.get("event") or "recorded_activity"),
+                "action": str(fields.get("action") or ""),
+                "actor": str(fields.get("actor") or ""),
+                "target": str(fields.get("target") or ""),
+                "detail": str(fields.get("detail") or ""),
+                "asset_id": str(fields.get("asset_id") or ""),
+                "tenant_id": scoped_tenant,
+                "record_hash": str(record.get("hash") or ""),
+            })
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return JSONResponse({"detail": "historical audit record is malformed"}, status_code=503)
+
+    page = matching_items[offset:offset + limit]
+    return {
+        "tenant_id": tenant_id,
+        "start": start_at.isoformat().replace("+00:00", "Z"),
+        "end": end_at.isoformat().replace("+00:00", "Z"),
+        "boundary": "[start, end)",
+        "timezone": "UTC",
+        "snapshot_head": pinned_head,
+        "total": len(matching_items),
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < len(matching_items),
+        "items": page,
+    }
 
 
 @app.on_event("startup")
@@ -293,6 +430,7 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
         "/v1/fleet": "items",
         "/v1/gate": "pending",
         "/v1/audit": "items",
+        "/v1/audit/history": "items",
         "/v1/feedback": "items",
         "/v1/issues/client-view": "items",
     }.get(path)
