@@ -48,6 +48,26 @@ Commit `ef1cc1efa3c1a0f408320c092568fc3681281ad8` moved the HTTP callback out of
 The queue intentionally retains at-least-once transport semantics. For the two agent event endpoints above, the controller returns the stored response for a matching replay, preventing the corresponding SQLite business transaction from running twice. A crash can still repeat effects outside that transaction; keep the claim scoped to the protected endpoint transaction, not the entire workflow.
 
 
+## Tenant-scoped issue archive export and restore
+
+Export one tenant's archived issue history to a new private JSONL snapshot. The command refuses to overwrite an existing destination and reports a SHA-256 digest:
+
+```bash
+python3 scripts/issue_archive.py export \
+  --tenant-id client-a \
+  --out /secure-independent-volume/client-a-issues.jsonl
+```
+
+Restore the snapshot by merging records into the configured archive. The restore requires an explicit matching tenant, rejects truncated or cross-tenant records, preserves conflicting existing history, and is safe to repeat:
+
+```bash
+python3 scripts/issue_archive.py restore \
+  --tenant-id client-a \
+  --input /secure-independent-volume/client-a-issues.jsonl
+```
+
+Protect the snapshot and its destination directory as client data. The digest is an integrity aid, not a digital signature; store the snapshot and digest under the client's approved backup controls. An approved retention schedule is still required before production archival rotation.
+
 ## Signed audit checkpoint workflow
 
 The exporter now creates a signed checkpoint by default. Generate a dedicated random key outside the repository and application host, store it in the approved secret manager, and provide it to the export/verify process as `CG_AUDIT_CHECKPOINT_KEY_HEX` (at least 32 random bytes encoded as 64+ hexadecimal characters). Never commit the key or pass it as a command-line argument.
