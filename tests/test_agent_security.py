@@ -98,3 +98,46 @@ def test_per_agent_identity_is_bound_to_active_enrollment(tmp_path, monkeypatch)
     ok, reason = agent_identity.verify_registration("host-a", fingerprint, timestamp, signature)
     assert not ok and reason == "agent_identity_secret_required"
     assert not agent_identity.assert_not_admin_key_on_agent("agent-api-key")[0]
+
+
+
+def test_registration_rejects_bad_signature_and_stale_timestamp(tmp_path, monkeypatch):
+    store = tmp_path / "agent_credentials.json"
+    store.write_text(json.dumps({
+        "agents": {
+            "host-secure": {
+                "tenant_id": "tenant-secure",
+                "api_key": "agent-key-secure",
+                "identity_secret": "identity-secret-secure",
+                "command_secret": "command-secret-secure",
+                "status": "active",
+            }
+        }
+    }))
+    monkeypatch.setattr(agent_credentials, "STORE", store)
+    monkeypatch.setenv("CG_PRODUCTION", "1")
+    fingerprint = agent_identity.host_fingerprint("host-secure", "linux-test", "machine-secure")
+
+    now = time.time()
+    ok, reason = agent_identity.verify_registration(
+        "host-secure", fingerprint, now, "0" * 64
+    )
+    assert not ok and reason == "bad_identity_signature"
+
+    stale = now - 601
+    stale_signature = agent_identity.sign_registration("host-secure", fingerprint, stale)
+    ok, reason = agent_identity.verify_registration(
+        "host-secure", fingerprint, stale, stale_signature
+    )
+    assert not ok and reason == "identity_signature_expired"
+
+
+def test_agent_fingerprint_change_is_detected(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_identity, "DATA", tmp_path)
+    monkeypatch.setattr(agent_identity, "FINGERPRINTS", tmp_path / "agent_fingerprints.json")
+    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-one", "host")
+    assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-one") is None
+
+    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-two", "host")
+    warning = agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two")
+    assert warning and "fingerprint_changed" in warning
