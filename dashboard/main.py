@@ -16,10 +16,11 @@ from typing import Optional
 import httpx
 from fastapi import FastAPI, Form, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 import auth as dashboard_auth
+import client_reporting
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = dashboard_auth.DATA_DIR
@@ -406,6 +407,78 @@ async def ops_weekly(request: Request):
     r = await api_get("/v1/reports/weekly", request)
     return PlainTextResponse(r.text, status_code=r.status_code)
 
+
+
+@app.get("/ops/reports/client.pdf")
+async def ops_client_pdf(request: Request):
+    if err := _require_sess(request):
+        return err
+    session = check_auth(request)
+    tenant_id = str((session or {}).get("tenant_id") or "").strip()
+    if not tenant_id:
+        return JSONResponse({"error": "tenant context is required for client reports"}, status_code=403)
+
+    paths = {
+        "risk": "/v1/risk/summary",
+        "fleet": "/v1/fleet",
+        "gate": "/v1/gate",
+        "issues": "/v1/issues/client-view",
+        "audit": "/v1/audit?limit=100",
+        "mode": "/v1/client-mode",
+        "weekly": "/v1/reports/weekly",
+    }
+    results = {}
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            async def fetch_one(key, path):
+                headers_for_request = operator_headers(session, "GET", path.split("?", 1)[0], tenant_id)
+                response = await client.get(f"{API_URL}{path}", headers=headers_for_request)
+                response.raise_for_status()
+                if key == "weekly":
+                    return response.text
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ValueError(f"{key} report source returned an invalid response")
+                returned_tenant = payload.get("tenant_id")
+                if returned_tenant and str(returned_tenant) != tenant_id:
+                    raise ValueError(f"{key} report source tenant mismatch")
+                return payload
+            fetched = await __import__("asyncio").gather(
+                *(fetch_one(key, path) for key, path in paths.items())
+            )
+            results = dict(zip(paths.keys(), fetched))
+    except Exception:
+        return JSONResponse(
+            {"error": "The report could not be completed because one or more monitoring sources were unavailable or invalid. No partial PDF was created."},
+            status_code=502,
+        )
+
+    mode_payload = results.get("mode") if isinstance(results.get("mode"), dict) else {}
+    snapshot = {
+        "tenant_id": tenant_id,
+        "risk": results["risk"],
+        "fleet": results["fleet"],
+        "gate": results["gate"],
+        "issues": results["issues"],
+        "audit": results["audit"],
+        "client_mode": mode_payload.get("client_mode"),
+        "weekly_summary": results["weekly"],
+    }
+    try:
+        pdf = client_reporting.build_client_pdf(snapshot, tenant_id=tenant_id)
+    except Exception:
+        return JSONResponse({"error": "PDF generation failed. No report was delivered."}, status_code=500)
+
+    filename = "CyberGuardian_Client_Report_" + time.strftime("%Y%m%d") + ".pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 @app.post("/ops/rollback/{asset_id}")
 async def ops_rollback(asset_id: str, request: Request):
