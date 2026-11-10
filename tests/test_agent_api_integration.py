@@ -20,6 +20,11 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
     monkeypatch.setenv("CG_PRODUCTION", "1")
     monkeypatch.setenv("CG_REQUIRE_AGENT_IDENTITY", "1")
     monkeypatch.setenv("CG_REQUIRE_COMMAND_SIG", "1")
+    monkeypatch.setenv("CYBERGUARDIAN_API_KEY", "admin-key-" + "a" * 40)
+    monkeypatch.setenv("CG_DASHBOARD_API_KEY", "dashboard-key-" + "b" * 40)
+    monkeypatch.setenv("CG_NAD_API_KEY", "nad-key-" + "c" * 40)
+    monkeypatch.setenv("CG_OPERATOR_ASSERTION_SECRET", "operator-secret-" + "d" * 40)
+    monkeypatch.setenv("DECISION_SERVICE_API_KEY", "decision-key-" + "e" * 40)
 
     import runtime_paths
     import agent_credentials
