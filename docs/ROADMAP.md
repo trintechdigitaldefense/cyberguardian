@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest verified R4 code commit:** `49987f6fecedd5718a1a2f53bea449fefc1ae7f4` (nonblocking offline queue delivery, restart/reconnect tests, and HMAC-signed audit checkpoint export/verification CLI; all six CI jobs passed).  
-**Latest full CI:** [run 42873367469](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42873367469) passed all six jobs on `49987f6fecedd5718a1a2f53bea449fefc1ae7f4`: Python 3.10/3.11/3.12 (105 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
+**Latest verified R4 branch commit:** `c5ad37e8e93537b52311306f5978ad818d776189` (signed checkpoint documentation and full R4 code; all six CI jobs passed).  
+**Latest full CI:** [run 42873533986](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42873533986) passed all six jobs on `c5ad37e8e93537b52311306f5978ad818d776189`: Python 3.10/3.11/3.12 (105 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
