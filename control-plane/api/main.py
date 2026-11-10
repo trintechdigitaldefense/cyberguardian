@@ -113,15 +113,14 @@ def _write_audit_with_operator(*args, **kwargs):
             "request_id": claims["request_id"],
         }, sort_keys=True, separators=(",", ":"))
         kwargs["detail"] = (detail + " | " + context).strip(" |")
-    result = _original_write_audit(*args, **kwargs)
-    # The independent ledger is appended after the transactional gateway
-    # audit write. If the chain cannot be extended, propagate the failure so
-    # callers that require an audit record can fail closed.
+    # Commit the independent append-only evidence first. If its chain is
+    # corrupt or storage is unavailable, do not report an audit write as
+    # successful; the original SQLite audit remains a queryable index.
     _append_audit_ledger_event(
         _AUDIT_LEDGER_PATH,
         {"args": list(args), "fields": kwargs},
     )
-    return result
+    return _original_write_audit(*args, **kwargs)
 
 
 _mod.write_audit = _write_audit_with_operator
