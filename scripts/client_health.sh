@@ -5,7 +5,11 @@ ok=0
 fail=0
 check() {
   local url="$1" label="$2"
-  if curl -fsS --max-time 3 "$url" | grep -qi "ok"; then
+  local -a headers=()
+  if [[ "$url" == *":8080/health" && -n "${CG_PILOT_RUN_ID:-}" ]]; then
+    headers=(-H "X-CG-Pilot-Run-ID: $CG_PILOT_RUN_ID" -H "X-Tenant-ID: ${CG_TENANT_ID:-default}")
+  fi
+  if curl -fsS --max-time 3 "${headers[@]}" "$url" | grep -qi "ok"; then
     echo "  [OK] $label"
     ok=$((ok+1))
   else
