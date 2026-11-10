@@ -40,6 +40,17 @@ def test_hardened_start_skips_bootstrap_agent_by_default():
     assert "hardened-mode safety default" in source
 
 
+def test_hardened_production_start_can_launch_explicitly_enrolled_agent():
+    source = (ROOT / "start.sh").read_text(encoding="utf-8")
+    agent_block = source.split('if [ "${CG_DISABLE_LOCAL_AGENT:-0}" = "1" ]; then', 1)[1]
+    strict_branch = agent_block.index('elif [ "$STRICT_AGENT_MODE" = "1" ]; then')
+    hardened_bootstrap_guard = agent_block.index('elif { { [ "${CG_HARDENED:-0}" = "1" ]')
+    enrolled_launch = agent_block.index("Starting enrolled agent")
+    assert strict_branch < enrolled_launch < hardened_bootstrap_guard
+    assert "CG_AGENT_ASSET_ID" in agent_block
+    assert "scripts/run_enrolled_agent.py --asset-id" in agent_block
+
+
 def test_credential_setup_never_prints_generated_secret_values():
     source = (ROOT / "scripts" / "setup_credentials.sh").read_text(encoding="utf-8")
     assert 'print(f"Admin API key' not in source
