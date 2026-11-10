@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0-security — 2026-11-10
+
+### Release hardening and R4 reliability work
+
+- R0-R3 engineering gates completed on the isolated `r2-1.6.0-security` branch; see `docs/ROADMAP.md` for exact CI evidence.
+- Dashboard operator assertions, service-level credentials/scopes, tenant-bound gateway authorization, audit attribution, secure browser policy, and production Compose acceptance.
+- Offline agent queue now uses locked, atomic, fsynced JSONL writes, bounded record/byte capacity, duplicate suppression, acknowledgement-only removal, retry backoff, bounded flush batches, and explicit overflow status.
+- Added CI tests for concurrent queue writers, retry/acknowledgement behavior, overflow preservation, permissions and corrupt-record retention.
+
+**Status:** R4 remains in progress; audit/action-history, fleet lifecycle, reporting/export and end-to-end integration acceptance remain open. This branch is not a client-ready release. R5's real 600-second soak and supervised pilot acceptance have not been completed.
+
+
+
 ## 1.2.0-tier1 — 2026-10-22
 
 ### Tier 1 — real containment + operator quality
