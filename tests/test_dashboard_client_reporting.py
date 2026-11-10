@@ -102,6 +102,7 @@ def test_historical_pdf_rejects_out_of_window_or_cross_tenant_records():
         lambda item: item.update(timestamp="2026-11-10T00:00:00Z"),
         lambda item: item.update(tenant_id="client-b"),
         lambda item: item.update(source_record_id=""),
+        lambda item: item.update(record_hash="bad-hash"),
     ):
         snapshot = historical_snapshot()
         mutation(snapshot["audit"]["items"][0])
