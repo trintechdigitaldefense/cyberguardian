@@ -193,12 +193,13 @@ class OfflineQueue:
             return len(self._read_records())
 
     def flush(self, post_fn: Callable, *, now: Optional[float] = None, limit: int = 50) -> Dict[str, Any]:
-        """Deliver outside the file lock, then reconcile acknowledgements atomically.
+        # Serialize delivery workers with a separate lock while leaving enqueue
+        # operations free to acquire the queue data lock during network calls.
+        with self._locked(self.flush_lock_path):
+            return self._flush_serialized(post_fn, now=now, limit=limit)
 
-        This keeps telemetry enqueue responsive during slow network calls. Concurrent
-        flushers may deliver the same item (at-least-once semantics); receivers should
-        deduplicate using the stable record ID carried in the payload/header.
-        """
+    def _flush_serialized(self, post_fn: Callable, *, now: Optional[float] = None, limit: int = 50) -> Dict[str, Any]:
+        """Deliver outside the data lock, then reconcile acknowledgements atomically."""
         current = time.time() if now is None else float(now)
         with self._locked():
             snapshot = self._read_records()
