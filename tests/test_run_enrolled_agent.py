@@ -88,7 +88,7 @@ def test_remote_agent_launcher_reads_only_private_complete_env_file(tmp_path):
         "CG_REQUIRE_AGENT_IDENTITY": "1",
         "CG_REQUIRE_COMMAND_SIG": "1",
     }
-    env_file.write_text("".join(f"{key}='{value}'\\n" for key, value in values.items()), encoding="utf-8")
+    env_file.write_text("".join(f"{key}='{value}'\n" for key, value in values.items()), encoding="utf-8")
     env_file.chmod(0o600)
     parsed = launcher.read_agent_environment_file(str(env_file))
     record = {
@@ -113,7 +113,7 @@ def test_remote_agent_launcher_reads_only_private_complete_env_file(tmp_path):
 
 def test_remote_agent_launcher_rejects_insecure_env_file_permissions(tmp_path):
     env_file = tmp_path / "agent.env"
-    env_file.write_text("CYBERGUARDIAN_ASSET_ID=asset-a\\n", encoding="utf-8")
+    env_file.write_text("CYBERGUARDIAN_ASSET_ID=asset-a\n", encoding="utf-8")
     env_file.chmod(0o644)
     try:
         launcher.read_agent_environment_file(str(env_file))
