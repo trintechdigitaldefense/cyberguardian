@@ -10,6 +10,8 @@ import os
 import secrets
 import time
 import uuid
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 from pathlib import Path
 from typing import Optional
 
@@ -410,20 +412,33 @@ async def ops_weekly(request: Request):
 
 
 @app.get("/ops/reports/client.pdf")
-async def ops_client_pdf(request: Request):
+async def ops_client_pdf(request: Request, start: str, end: str):
     if err := _require_sess(request):
         return err
     session = check_auth(request)
     tenant_id = str((session or {}).get("tenant_id") or "").strip()
     if not tenant_id:
         return JSONResponse({"error": "tenant context is required for client reports"}, status_code=403)
+    try:
+        start_value = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        end_value = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+        if start_value.tzinfo is None or end_value.tzinfo is None:
+            raise ValueError("explicit timezone required")
+        start_utc = start_value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        end_utc = end_value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if end_value <= start_value:
+            raise ValueError("end must be later than start")
+    except (TypeError, ValueError):
+        return JSONResponse(
+            {"error": "Choose a valid reporting period with timezone-aware start and end timestamps."},
+            status_code=422,
+        )
 
     paths = {
         "risk": "/v1/risk/summary",
         "fleet": "/v1/fleet",
         "gate": "/v1/gate",
         "issues": "/v1/issues/client-view",
-        "audit": "/v1/audit?limit=100",
         "mode": "/v1/client-mode",
         "weekly": "/v1/reports/weekly",
     }
@@ -440,13 +455,67 @@ async def ops_client_pdf(request: Request):
                 if not isinstance(payload, dict):
                     raise ValueError(f"{key} report source returned an invalid response")
                 returned_tenant = payload.get("tenant_id")
-                if returned_tenant and str(returned_tenant) != tenant_id:
+                if returned_tenant is not None and str(returned_tenant) != tenant_id:
                     raise ValueError(f"{key} report source tenant mismatch")
                 return payload
+
             fetched = await __import__("asyncio").gather(
                 *(fetch_one(key, path) for key, path in paths.items())
             )
             results = dict(zip(paths.keys(), fetched))
+
+            # Pin the first page to one verified append-only ledger head. Every
+            # subsequent page uses that head, so concurrent new events cannot
+            # shift offsets or cause omissions/duplicates in this report.
+            audit_items = []
+            offset = 0
+            snapshot_head = ""
+            expected_total = None
+            while True:
+                query = urlencode({
+                    "start": start_utc,
+                    "end": end_utc,
+                    "limit": 500,
+                    "offset": offset,
+                    **({"snapshot_head": snapshot_head} if snapshot_head else {}),
+                })
+                audit_path = "/v1/audit/history?" + query
+                headers_for_request = operator_headers(
+                    session, "GET", "/v1/audit/history", tenant_id
+                )
+                response = await client.get(
+                    f"{API_URL}{audit_path}", headers=headers_for_request
+                )
+                response.raise_for_status()
+                page = response.json()
+                if not isinstance(page, dict) or str(page.get("tenant_id") or "") != tenant_id:
+                    raise ValueError("historical audit source tenant identity is missing or mismatched")
+                if page.get("boundary") != "[start, end)" or page.get("timezone") != "UTC":
+                    raise ValueError("historical audit source has unsupported reporting-period semantics")
+                if expected_total is None:
+                    expected_total = int(page.get("total", -1))
+                    snapshot_head = str(page.get("snapshot_head") or "")
+                elif int(page.get("total", -1)) != expected_total or str(page.get("snapshot_head") or "") != snapshot_head:
+                    raise ValueError("historical audit pagination snapshot changed")
+                items = page.get("items")
+                if not isinstance(items, list):
+                    raise ValueError("historical audit source returned invalid records")
+                audit_items.extend(items)
+                offset += len(items)
+                if offset > 10000:
+                    raise ValueError("historical report exceeds the 10,000-record PDF limit; narrow the reporting period")
+                if not page.get("has_more"):
+                    break
+                if not items:
+                    raise ValueError("historical audit pagination made no progress")
+            if expected_total is None or len(audit_items) != expected_total:
+                raise ValueError("historical audit record count does not match the source")
+            results["audit"] = {
+                "tenant_id": tenant_id,
+                "items": audit_items,
+                "total": expected_total,
+                "snapshot_head": snapshot_head,
+            }
     except Exception:
         return JSONResponse(
             {"error": "The report could not be completed because one or more monitoring sources were unavailable or invalid. No partial PDF was created."},
@@ -464,8 +533,18 @@ async def ops_client_pdf(request: Request):
         "client_mode": mode_payload.get("client_mode"),
         "weekly_summary": results["weekly"],
     }
+    report_period = {
+        "start": start_utc,
+        "end": end_utc,
+        "timezone": "UTC",
+        "boundary": "[start, end)",
+        "snapshot_head": results["audit"]["snapshot_head"],
+        "source_record_count": results["audit"]["total"],
+    }
     try:
-        pdf = client_reporting.build_client_pdf(snapshot, tenant_id=tenant_id)
+        pdf = client_reporting.build_client_pdf(
+            snapshot, tenant_id=tenant_id, report_period=report_period
+        )
     except Exception:
         return JSONResponse({"error": "PDF generation failed. No report was delivered."}, status_code=500)
 
