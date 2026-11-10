@@ -5,6 +5,8 @@
 
 Detect → Decide → **Approve** → Contain → Audit.
 
+> **R4 status: TEST CANDIDATE — NOT CLIENT-READY / NOT APPROVED FOR PRODUCTION.** The owner pilot validation pack is available in [docs/CLIENT_PILOT_VALIDATION.md](docs/CLIENT_PILOT_VALIDATION.md). Physical offline/multi-agent exercises, independent off-host audit recovery and client-approved retention remain mandatory R4 release gates.
+
 > **Not** a 24/7 SOC, full multi-OS EDR, or open-ended autonomous AI.  
 > Default: **Client Mode ON** — isolate / kill / block need human approval.
 
@@ -50,6 +52,8 @@ Dashboard proxies (session required): `/ops/client-mode`, `/ops/gate/*`, `/ops/a
 
 ## Quick start
 
+For the controlled owner test, follow [R4 Client Pilot Validation](docs/CLIENT_PILOT_VALIDATION.md) first. It covers the Android Termux/Ubuntu preparation, exact branch clone, credential setup, loopback-only startup, synthetic workflow, PDF verification and stop/evidence steps.
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -57,9 +61,8 @@ pip install -r requirements.txt
 
 # Hardened (localhost only) — recommended for pilots
 export CG_HARDENED=1
+export CG_DISABLE_LOCAL_AGENT=1
 ./start.sh
-
-./scripts/pilot_day1.sh
 ```
 
 | URL | Purpose |
