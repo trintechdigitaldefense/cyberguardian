@@ -83,12 +83,11 @@ def test_historical_audit_window_is_tenant_scoped_and_start_inclusive_end_exclus
     start = datetime(2026, 11, 1, tzinfo=timezone.utc).timestamp()
     middle = datetime(2026, 11, 5, 12, tzinfo=timezone.utc).timestamp()
     end = datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp()
-    _seed(main, "tenant-a", "tenant-a-at-start", start)
-    _seed(main, "tenant-a", "tenant-a-inside", middle)
-    _seed(main, "tenant-a", "tenant-a-at-end", end)
-    _seed(main, "tenant-b", "tenant-b-inside", middle)
-
     with TestClient(main.app) as client:
+        _seed(main, "tenant-a", "tenant-a-at-start", start)
+        _seed(main, "tenant-a", "tenant-a-inside", middle)
+        _seed(main, "tenant-a", "tenant-a-at-end", end)
+        _seed(main, "tenant-b", "tenant-b-inside", middle)
         params = {"start": "2026-11-01T00:00:00Z", "end": "2026-11-10T00:00:00Z", "limit": 1}
         first = client.get("/v1/audit/history", params=params, headers=_auth_headers(main, dashboard_key))
         assert first.status_code == 200, first.text
