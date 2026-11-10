@@ -65,3 +65,27 @@ def test_concurrent_audit_writers_preserve_sequence_and_chain(tmp_path):
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [item["sequence"] for item in records] == list(range(1, 41))
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+
+def test_export_creates_verified_consistent_snapshot(tmp_path):
+    source = tmp_path / "audit.jsonl"
+    destination = tmp_path / "exports" / "audit-snapshot.jsonl"
+    ledger.append_event(source, {"event": "export-test", "tenant": "client-a"})
+    manifest = ledger.export_verified_ledger(source, destination)
+    assert manifest["records"] == 1
+    assert manifest["sha256"]
+    assert destination.read_bytes() == source.read_bytes()
+    assert ledger.verify_ledger(destination)["valid"] is True
+    assert destination.stat().st_mode & 0o777 == 0o600
+
+
+def test_export_refuses_corrupt_source(tmp_path):
+    source = tmp_path / "audit.jsonl"
+    source.write_text('{"bad":true}\\n')
+    try:
+        ledger.export_verified_ledger(source, tmp_path / "export.jsonl")
+    except ledger.LedgerIntegrityError:
+        pass
+    else:
+        raise AssertionError("corrupt audit source must not be exported")
