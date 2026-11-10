@@ -243,3 +243,94 @@ def test_issue_memory_rejects_symlinked_store_and_lock_paths(tmp_path, monkeypat
     else:
         raise AssertionError("symlinked issue-memory lock must be rejected")
     assert lock_target.read_text(encoding="utf-8") == "untouched"
+
+
+
+def test_issue_archive_export_and_restore_are_tenant_scoped_and_idempotent(tmp_path, monkeypatch):
+    store = tmp_path / "issues.jsonl"
+    archive = tmp_path / "issues_archive.jsonl"
+    monkeypatch.setattr(issue_memory, "STORE", store)
+    monkeypatch.setattr(issue_memory, "ARCHIVE", archive)
+    monkeypatch.setattr(issue_memory, "MAX_ISSUES", 1)
+    monkeypatch.setattr(issue_memory, "MAX_ARCHIVED_ISSUES", 10)
+
+    first_a = issue_memory.remember_issue("tenant A archived", "asset-a", tenant_id="tenant-a")
+    issue_memory.remember_issue("tenant B active", "asset-b", tenant_id="tenant-b")
+    issue_memory.remember_issue("tenant A active", "asset-a2", tenant_id="tenant-a")
+    assert first_a["id"] in {item["id"] for item in issue_memory.list_archived_issues(tenant_id="tenant-a")}
+
+    export_path = tmp_path / "secure-export" / "tenant-a.jsonl"
+    manifest = issue_memory.export_archived_issues(export_path, "tenant-a")
+    assert manifest["tenant_id"] == "tenant-a"
+    assert manifest["records"] == 1
+    assert len(manifest["sha256"]) == 64
+    assert export_path.stat().st_mode & 0o777 == 0o600
+    assert export_path.parent.stat().st_mode & 0o777 == 0o700
+    exported = [json.loads(line) for line in export_path.read_text(encoding="utf-8").splitlines()]
+    assert all(item["tenant_id"] == "tenant-a" for item in exported)
+
+    restore_archive = tmp_path / "restore" / "issues_archive.jsonl"
+    restore_archive.parent.mkdir(mode=0o700)
+    monkeypatch.setattr(issue_memory, "ARCHIVE", restore_archive)
+    restored = issue_memory.restore_archived_issues(export_path, "tenant-a")
+    assert restored == {"tenant_id": "tenant-a", "restored": 1, "already_present": 0, "total_archived": 1}
+    repeated = issue_memory.restore_archived_issues(export_path, "tenant-a")
+    assert repeated["restored"] == 0
+    assert repeated["already_present"] == 1
+    assert issue_memory.list_archived_issues(tenant_id="tenant-a")[0]["id"] == first_a["id"]
+
+
+def test_issue_archive_restore_rejects_cross_tenant_and_truncated_exports(tmp_path, monkeypatch):
+    monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    monkeypatch.setattr(issue_memory, "ARCHIVE", tmp_path / "live_archive.jsonl")
+    cross_tenant = tmp_path / "cross-tenant.jsonl"
+    cross_tenant.write_text(json.dumps({
+        "id": "foreign", "asset_id": "asset-b", "tenant_id": "tenant-b"
+    }) + "\\n", encoding="utf-8")
+    try:
+        issue_memory.restore_archived_issues(cross_tenant, "tenant-a")
+    except issue_memory.IssueMemoryIntegrityError as exc:
+        assert "cross-tenant" in str(exc)
+    else:
+        raise AssertionError("cross-tenant archive records must be rejected")
+
+    truncated = tmp_path / "truncated.jsonl"
+    truncated.write_text(json.dumps({
+        "id": "local", "asset_id": "asset-a", "tenant_id": "tenant-a"
+    }), encoding="utf-8")
+    try:
+        issue_memory.restore_archived_issues(truncated, "tenant-a")
+    except issue_memory.IssueMemoryIntegrityError as exc:
+        assert "truncated" in str(exc)
+    else:
+        raise AssertionError("truncated archive exports must be rejected")
+    assert not (tmp_path / "live_archive.jsonl").exists()
+
+
+def test_issue_archive_export_refuses_overwrite_and_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    monkeypatch.setattr(issue_memory, "ARCHIVE", tmp_path / "live_archive.jsonl")
+    issue_memory.remember_issue("first", "asset-a", tenant_id="tenant-a")
+    issue_memory.remember_issue("second", "asset-b", tenant_id="tenant-a")
+    output_dir = tmp_path / "exports"
+    output_dir.mkdir(mode=0o700)
+    output = output_dir / "archive.jsonl"
+    output.write_text("existing", encoding="utf-8")
+    try:
+        issue_memory.export_archived_issues(output, "tenant-a")
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("archive export must not overwrite an existing file")
+
+    target = tmp_path / "target.jsonl"
+    target.write_text("untouched", encoding="utf-8")
+    link = output_dir / "linked.jsonl"
+    link.symlink_to(target)
+    try:
+        issue_memory.export_archived_issues(link, "tenant-a")
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked archive export destination must be rejected")
+    assert target.read_text(encoding="utf-8") == "untouched"
