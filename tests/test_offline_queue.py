@@ -196,3 +196,60 @@ def test_flush_exposes_stable_record_id_to_idempotent_callback(tmp_path):
     result = queue.flush(post_fn, now=100)
     assert result["flushed"] == 1
     assert delivered == [("/v1/detections", stored["payload"], stored["id"])]
+
+
+
+def test_queue_preserves_valid_json_records_with_invalid_schema(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.path.write_text("null\n", encoding="utf-8")
+    result = queue.flush(lambda path, payload: (True, {}), now=100)
+    assert result["failed"] == 1
+    preserved = json.loads(queue.path.read_text(encoding="utf-8").splitlines()[0])
+    assert "_corrupt_line" in preserved
+    assert preserved["_corrupt_line"] == "null"
+
+
+def test_atomic_replace_failure_preserves_previous_queue(tmp_path, monkeypatch):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/first", {"event": "durable"})
+    original = queue.path.read_bytes()
+
+    def fail_replace(_source, _destination):
+        raise OSError("simulated atomic replace failure")
+
+    monkeypatch.setattr(offline.os, "replace", fail_replace)
+    try:
+        queue.enqueue("POST", "/second", {"event": "must-not-partially-commit"})
+    except OSError as exc:
+        assert "simulated" in str(exc)
+    else:
+        raise AssertionError("simulated replace failure must propagate")
+    assert queue.path.read_bytes() == original
+    assert not list(tmp_path.glob("queue.jsonl.*.tmp"))
+
+
+def test_fsync_failure_preserves_previous_queue(tmp_path, monkeypatch):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/first", {"event": "durable"})
+    original = queue.path.read_bytes()
+
+    def fail_fsync(_fd):
+        raise OSError("simulated fsync failure")
+
+    monkeypatch.setattr(offline.os, "fsync", fail_fsync)
+    try:
+        queue.enqueue("POST", "/second", {"event": "must-not-partially-commit"})
+    except OSError as exc:
+        assert "simulated" in str(exc)
+    else:
+        raise AssertionError("simulated fsync failure must propagate")
+    assert queue.path.read_bytes() == original
+
+
+def test_queue_directories_and_lock_files_are_private(tmp_path):
+    queue = make_queue(tmp_path)
+    assert queue.path.parent.stat().st_mode & 0o777 == 0o700
+    assert queue.lock_path.stat().st_mode & 0o777 == 0o600
+    assert queue.flush_lock_path.stat().st_mode & 0o777 == 0o600
+    queue.set_status("online", 0)
+    assert queue.status_path.stat().st_mode & 0o777 == 0o600
