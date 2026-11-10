@@ -49,6 +49,23 @@ def test_export_and_verify_signed_checkpoint_cli(tmp_path):
     assert verified.returncode == 0, verified.stderr
     assert json.loads(verified.stdout)["valid"] is True
 
+    restored_path = tmp_path / "restored" / "audit.jsonl"
+    restored = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "restore_audit_checkpoint.py"),
+            "--snapshot", str(snapshot),
+            "--destination", str(restored_path),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert restored_path.read_bytes() == snapshot.read_bytes()
+
     wrong_env = env.copy()
     wrong_env["CG_AUDIT_CHECKPOINT_KEY_HEX"] = "b2" * 32
     rejected = subprocess.run(
