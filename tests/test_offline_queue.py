@@ -308,3 +308,18 @@ def test_queue_rejects_symlinked_storage_directory(tmp_path):
         assert "symlink" in str(exc)
     else:
         raise AssertionError("symlinked queue directory must be rejected")
+
+
+
+def test_queue_rejects_symlinked_lock_file(tmp_path):
+    target = tmp_path / "target"
+    target.write_text("do-not-touch", encoding="utf-8")
+    queue_path = tmp_path / "queue.jsonl"
+    (tmp_path / "queue.jsonl.lock").symlink_to(target)
+    try:
+        offline.OfflineQueue(queue_path)
+    except PermissionError as exc:
+        assert "lock" in str(exc)
+    else:
+        raise AssertionError("symlinked queue lock must be rejected")
+    assert target.read_text(encoding="utf-8") == "do-not-touch"
