@@ -39,6 +39,7 @@ baseline_names: set = set()
 scan_count = 0
 _net_seen: set = set()
 _fim_ready = False
+AUTH_REJECTED = False
 
 SUSPICIOUS = {"mimikatz", "powershell -enc", "nc.exe", "ncat", "meterpreter", "cobaltstrike"}
 
@@ -54,6 +55,24 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10, *, queue_on_failure
                 return True, json.loads(body)
             except Exception:
                 return True, {"raw": body}
+    except urllib.error.HTTPError as e:
+        global AUTH_REJECTED
+        if e.code in (401, 403):
+            AUTH_REJECTED = True
+            print(f"[agent] POST {path} rejected by controller (HTTP {e.code}); credentials may be revoked or invalid")
+            return False, {"auth_error": e.code}
+        if e.code < 500 and e.code not in (408, 425, 429):
+            print(f"[agent] POST {path} rejected permanently (HTTP {e.code}); not queued")
+            return False, {"http_error": e.code}
+        if not queue_on_failure:
+            print(f"[agent] POST {path} unavailable (HTTP {e.code}); it will be retried with fresh state")
+            return False, {"http_error": e.code}
+        try:
+            queued = queue.enqueue("POST", path, payload)
+            print(f"[agent] POST {path} failed — queued ({queued} pending): HTTP {e.code}")
+        except Exception as queue_error:
+            print(f"[agent] POST {path} failed and offline queue rejected the event: {queue_error}")
+        return False, {"http_error": e.code}
     except Exception as e:
         if not queue_on_failure:
             print(f"[agent] POST {path} failed; it will be retried with fresh state on the next heartbeat: {e}")
@@ -78,6 +97,14 @@ def cg_api_get(path: str, timeout: int = 10):
                 return True, json.loads(body)
             except Exception:
                 return True, {"raw": body}
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            global AUTH_REJECTED
+            AUTH_REJECTED = True
+            print(f"[agent] GET {path} rejected by controller (HTTP {e.code}); stopping agent activity")
+        else:
+            print(f"[agent] GET {path} failed (HTTP {e.code})")
+        return False, {"http_error": e.code}
     except Exception as e:
         print(f"[agent] GET {path} failed: {e}")
         return False, {}
@@ -251,7 +278,11 @@ def _deliver_queued_record(path: str, payload: dict):
 def scan_once():
     global scan_count, baseline_names
     poll_and_execute_commands()
+    if AUTH_REJECTED:
+        raise SystemExit("agent credentials rejected; stop and re-enroll or rotate this device")
     heartbeat()
+    if AUTH_REJECTED:
+        raise SystemExit("agent credentials rejected; stop and re-enroll or rotate this device")
     fim_scan()
     net_scan()
     procs = list_processes()
@@ -291,14 +322,22 @@ def main():
         print("[agent] WARNING: CYBERGUARDIAN_API_KEY not set")
     print(f"[agent] API={API} asset={ASSET} version={VERSION}")
     register()
+    if AUTH_REJECTED:
+        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+        return 2
     if args.once:
         scan_once()
         return
     while True:
         try:
             scan_once()
+        except SystemExit:
+            raise
         except Exception as e:
             print(f"[agent] loop error: {e}")
+        if AUTH_REJECTED:
+            print("[agent] credentials rejected; exiting")
+            return 2
         time.sleep(max(10, args.interval))
 
 
