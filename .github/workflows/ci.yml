@@ -242,7 +242,7 @@ jobs:
           )
           with main._mod.db() as conn:
               row = conn.execute(
-                  "SELECT id, asset_id, action, status, pending_action_id, tenant_id "
+                  "SELECT id, asset_id, action, status, pending_action_id "
                   "FROM agent_commands WHERE pending_action_id=?",
                   ("r4-ci-safe-escalate",),
               ).fetchone()
