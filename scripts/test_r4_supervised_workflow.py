@@ -229,11 +229,22 @@ def main() -> int:
     command_id = str(command_result["command_id"])
     assert any(command_id in json.dumps(item, sort_keys=True) for item in audit.get("items", [])), audit
 
-    report_status, _, report = call(
-        "GET", "/v1/reports/weekly?tenant_id=default",
-        headers=operator_headers("GET", "/v1/reports/weekly", "r4-weekly-report"),
+    report_path = "/v1/reports/weekly?tenant_id=default"
+    report_request = urllib.request.Request(
+        BASE + report_path,
+        headers={
+            **operator_headers("GET", "/v1/reports/weekly", "r4-weekly-report"),
+            "Accept": "text/plain",
+        },
+        method="GET",
     )
-    assert report_status == 200, report
+    with urllib.request.urlopen(report_request, timeout=15) as report_response:
+        report_status = report_response.status
+        report_text = report_response.read().decode("utf-8", errors="replace")
+    assert report_status == 200 and report_text.strip(), {
+        "status": report_status,
+        "report": report_text[:1000],
+    }
     print(json.dumps({
         "workflow": "detect-decision-stage-approve-reject-signed-delivery-safe-execution-audit-report",
         "detection_ids": sorted(detection_ids),
@@ -241,7 +252,8 @@ def main() -> int:
         "rejected_action_id": reject_id,
         "command_id": command_id,
         "audit_records": len(audit.get("items", [])),
-        "report_tenant": report.get("tenant_id", TENANT),
+        "report_tenant": TENANT,
+        "weekly_report_chars": len(report_text),
         "idempotent_replay": True,
     }, sort_keys=True))
     return 0
