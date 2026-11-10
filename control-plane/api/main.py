@@ -174,6 +174,72 @@ def _deny_verified_operator(request: Request, claims: dict, reason: str, status_
     return JSONResponse({"detail": reason}, status_code=status_code)
 
 
+def _item_matches_tenant(item: dict, tenant_id: str) -> bool:
+    item_tenant = item.get("tenant_id")
+    if item_tenant is not None:
+        return str(item_tenant or "default") == tenant_id
+    detail = str(item.get("detail") or "")
+    marker = detail.rfind("{")
+    if marker >= 0:
+        try:
+            detail_context = json.loads(detail[marker:])
+            if detail_context.get("tenant_id") is not None:
+                return str(detail_context["tenant_id"]) == tenant_id
+        except (ValueError, TypeError):
+            pass
+    asset_id = str(item.get("asset_id") or "")
+    if asset_id:
+        return _asset_matches_tenant(asset_id, tenant_id)
+    pending_id = str(item.get("pending_action_id") or item.get("id") or "")
+    if pending_id:
+        return _pending_action_matches_tenant(pending_id, tenant_id)
+    return False
+
+
+async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str):
+    list_key = {
+        "/v1/fleet": "items",
+        "/v1/gate": "pending",
+        "/v1/audit": "items",
+        "/v1/feedback": "items",
+        "/v1/issues/client-view": "items",
+    }.get(path)
+    if not list_key or response.status_code >= 400:
+        return response
+    content_type = str(response.headers.get("content-type") or "")
+    if "application/json" not in content_type:
+        return response
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    try:
+        payload = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return JSONResponse({"detail": "tenant response could not be validated"}, status_code=502)
+    if not isinstance(payload, dict) or not isinstance(payload.get(list_key), list):
+        return JSONResponse({"detail": "tenant response shape could not be validated"}, status_code=502)
+    filtered = [item for item in payload[list_key] if isinstance(item, dict) and _item_matches_tenant(item, tenant_id)]
+    payload[list_key] = filtered
+    if path == "/v1/gate":
+        payload["pending_count"] = len(filtered)
+    elif path == "/v1/fleet":
+        payload["total"] = len(filtered)
+        payload["online"] = sum(1 for item in filtered if item.get("status") == "online")
+        payload["offline"] = sum(1 for item in filtered if item.get("status") != "online")
+    elif "count" in payload:
+        payload["count"] = len(filtered)
+    headers = {
+        key: value for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "content-type", "transfer-encoding"}
+    }
+    return JSONResponse(
+        payload,
+        status_code=response.status_code,
+        headers=headers,
+        background=getattr(response, "background", None),
+    )
+
+
 @app.middleware("http")
 async def _verify_dashboard_operator(request: Request, call_next):
     api_key = str(request.headers.get("X-API-Key") or "")
@@ -272,6 +338,9 @@ async def _verify_dashboard_operator(request: Request, call_next):
                 _logger.exception("operator audit start write failed")
                 return JSONResponse({"detail": "operator audit store unavailable"}, status_code=503)
             response = await call_next(request)
+            response = await _filter_dashboard_tenant_response(
+                response, claims["tenant_id"], request.url.path,
+            )
             try:
                 _mod.write_audit(
                     event="operator_request_completed",
