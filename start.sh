@@ -225,20 +225,9 @@ elif [ "$STRICT_AGENT_MODE" = "1" ]; then
     elif ! python3 -c 'import os,stat,sys; s=os.stat(sys.argv[1]); sys.exit(0 if stat.S_ISREG(s.st_mode) and not (stat.S_IMODE(s.st_mode) & 0o077) else 1)' "$AGENT_ENV_FILE"; then
       echo "WARNING: agent environment file must be a regular file with no group/other permissions (0400 or 0600); local agent was not started."
     else
-      echo "Starting enrolled local agent..."
-      (
-        set -a
-        . "$AGENT_ENV_FILE"
-        set +a
-        : "${CYBERGUARDIAN_ASSET_ID:?missing CYBERGUARDIAN_ASSET_ID}"
-        : "${CYBERGUARDIAN_TENANT:?missing CYBERGUARDIAN_TENANT}"
-        : "${CYBERGUARDIAN_API_KEY:?missing per-agent CYBERGUARDIAN_API_KEY}"
-        : "${CG_AGENT_IDENTITY_SECRET:?missing CG_AGENT_IDENTITY_SECRET}"
-        : "${CG_COMMAND_SIGNING_SECRET:?missing CG_COMMAND_SIGNING_SECRET}"
-        export CG_REQUIRE_AGENT_IDENTITY=1 CG_REQUIRE_COMMAND_SIG=1
-        export CYBERGUARDIAN_API=http://127.0.0.1:8080 CG_CONTROLLER_URL=http://127.0.0.1:8080
-        exec nohup python3 -u agents/linux-ebpf/agent.py --interval 60
-      ) > /tmp/cg-agent.log 2>&1 &
+      echo "Starting enrolled local agent from the protected registry (environment file used only to resolve asset ID)..."
+      (cd "$ROOT" && nohup python3 -u scripts/run_enrolled_agent.py --env-file "$AGENT_ENV_FILE" \
+        --api http://127.0.0.1:8080 --interval 60 > /tmp/cg-agent.log 2>&1 &)
     fi
   fi
 else
