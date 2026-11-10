@@ -63,7 +63,12 @@ class IssueMemoryCapacityError(RuntimeError):
 def _store_lock():
     STORE.parent.mkdir(parents=True, exist_ok=True)
     lock_path = STORE.with_name(STORE.name + ".lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    archive_path = _archive_path()
+    for protected_path in (STORE, lock_path, archive_path):
+        if protected_path.is_symlink():
+            raise PermissionError(f"issue-memory path must not be a symlink: {protected_path}")
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(lock_path), flags, 0o600)
     try:
         os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
