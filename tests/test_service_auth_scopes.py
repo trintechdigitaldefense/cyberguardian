@@ -142,6 +142,36 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             and "tenant_id" in str(item.get("detail", ""))
             for item in audit_items
         ), audit_response.text
+        from operator_context import CURRENT_OPERATOR
+        tenant_b_token = CURRENT_OPERATOR.set({
+            "sub": "operator-b", "role": "admin", "tenant_id": "tenant-b",
+            "request_id": "tenant-b-audit-seed",
+        })
+        try:
+            main._mod.write_audit(
+                event="tenant-b-secret-event",
+                action="test",
+                target="asset-tenant-b",
+                actor="operator-b",
+                detail="tenant-b-only audit marker",
+                result_ok=1,
+            )
+        finally:
+            CURRENT_OPERATOR.reset(tenant_b_token)
+        audit_after_seed_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="GET", path="/v1/audit",
+            request_id="integration-audit-isolation",
+        )
+        audit_after_seed = client.get(
+            "/v1/audit?limit=100",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": audit_after_seed_assertion},
+        )
+        assert audit_after_seed.status_code == 200, audit_after_seed.text
+        assert not any(
+            item.get("event") == "tenant-b-secret-event"
+            for item in audit_after_seed.json().get("items", [])
+        ), audit_after_seed.text
 
         query_override = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
