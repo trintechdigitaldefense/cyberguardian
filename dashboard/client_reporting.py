@@ -165,6 +165,15 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         title="CyberGuardian Client Security Report",
         author="TrinTech Digital Defense",
     )
+    coverage_text = (
+        f"<b>Activity reporting period:</b> {period_start.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+        f"to {period_end.strftime('%Y-%m-%d %H:%M:%S UTC')} (start inclusive, end exclusive)<br/>"
+        f"<b>Historical activity records:</b> {len(audit)} verified, tenant-matched records<br/>"
+        f"<b>Audit checkpoint:</b> {html.escape(_plain(report_period.get('snapshot_head'), 80))}<br/>"
+        "<b>Other monitoring figures:</b> Current snapshot at report generation time"
+    ) if report_period is not None else (
+        "<b>Coverage:</b> Current monitoring snapshot and the available recent activity summary"
+    )
     story = [
         Paragraph("CyberGuardian", styles["CGTitle"]),
         Paragraph("Client Security & Monitoring Report", styles["Heading2"]),
@@ -173,14 +182,7 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         Paragraph(
             f"<b>Client reference:</b> {html.escape(_plain(tenant_id, 100))}<br/>"
             f"<b>Generated:</b> {generated_at.astimezone(timezone.utc).strftime('%d %b %Y, %H:%M UTC')}<br/>"
-            (
-                f"<b>Activity reporting period:</b> {period_start.strftime('%Y-%m-%d %H:%M:%S UTC')} "
-                f"to {period_end.strftime('%Y-%m-%d %H:%M:%S UTC')} (start inclusive, end exclusive)<br/>"
-                f"<b>Historical activity records:</b> {len(audit)} verified, tenant-matched records<br/>"
-                f"<b>Audit checkpoint:</b> {html.escape(_plain(report_period.get('snapshot_head'), 80))}<br/>"
-                "<b>Other monitoring figures:</b> Current snapshot at report generation time"
-            ) if report_period is not None else
-            "<b>Coverage:</b> Current monitoring snapshot and the available recent activity summary",
+            f"{coverage_text}",
             styles["CGBody"],
         ),
         Paragraph("At a glance", styles["CGSection"]),
@@ -298,11 +300,18 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         ),
         Paragraph("Data sources and report limitations", styles["CGSection"]),
         Paragraph(
-            "This report was assembled from the authenticated dashboard's client-scoped monitoring summary, "
-            "device list, approval queue, remembered-issue view, activity records and recent digest. "
-            "Counts reflect the data returned by those services at report time; the activity view is limited "
-            "to the latest records exposed by the service. Missing data is not treated as zero. "
-            "This is an operational summary, not a certification, forensic conclusion or guarantee of security.",
+            (
+                "Historical activity is read from the verified append-only audit ledger for the exact UTC "
+                "reporting interval shown above. Each included activity row carries its source record ID. "
+                "Other figures are current monitoring snapshots, not historical time-series totals. "
+                "Missing or unscoped audit records are excluded rather than assigned to a client. "
+                "This is an operational summary, not a certification, forensic conclusion or guarantee of security."
+            ) if report_period is not None else (
+                "This report was assembled from the authenticated dashboard's client-scoped monitoring summary, "
+                "device list, approval queue, remembered-issue view, activity records and recent digest. "
+                "Counts reflect the data returned by those services at report time. Missing data is not treated "
+                "as zero. This is an operational summary, not a certification, forensic conclusion or guarantee of security."
+            ),
             styles["CGSmall"],
         ),
         Spacer(1, 10),
