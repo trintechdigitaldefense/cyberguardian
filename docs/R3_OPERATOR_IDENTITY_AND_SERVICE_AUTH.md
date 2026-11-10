@@ -87,3 +87,17 @@ Do not trust body fields or headers for actor, role, tenant, or approval identit
 6. Run full Compose acceptance suite and review deployment/secret migration documentation.
 
 **Release rule:** R3 remains in progress until every acceptance item above is implemented and evidenced by tests. Do not start R4, merge the draft PR, or describe CyberGuardian as client-ready before R3 acceptance is complete.
+
+
+## Implementation progress (2026-11-10)
+
+The first operator-assertion implementation slice is now present on the security branch:
+
+- `control-plane/api/operator_context.py` mints/verifies canonical HMAC-SHA-256 assertions, enforces a 32-byte minimum secret, checks a 60-second age / 5-second future-skew window, binds method/path/tenant, and consumes single-use nonces in a persistent SQLite replay store.
+- `dashboard/main.py` mints request-bound assertions from the authenticated server-side session for dashboard proxy calls and the initial dashboard data load. Browser-supplied actor, role, or tenant values are not used as assertion claims.
+- `control-plane/api/main.py` verifies assertions at the gateway boundary in production, exposes verified claims in request state and a request-scoped context variable, and enriches gateway audit writes with the verified subject, role, tenant, and request ID. It writes a durable start record before the handler runs; completion-write failures are logged while the start record remains.
+- Docker Compose now requires the same dedicated `CG_OPERATOR_ASSERTION_SECRET` in the API and dashboard containers. The API data volume stores replay nonces across gateway restarts.
+
+Tests added in `tests/test_operator_context.py` cover valid claims, signature tampering, expiry/future time, method/path/tenant binding, nonce replay, weak secrets, and dashboard session-derived signing.
+
+**Important limitations — R3 is not accepted:** the gateway's current shared API credential is still used by dashboard and NAD workloads; exact default-deny service scopes have not yet been implemented. Gateway role enforcement for each route, cross-tenant object-ID substitution coverage, full Compose acceptance, CSP/throttle/startup hardening, and audit-schema integration review remain outstanding. The assertion middleware currently protects requests using the configured dashboard API key in production; non-production mode intentionally bypasses enforcement. Do not treat the present slice as client-ready or start R4.
