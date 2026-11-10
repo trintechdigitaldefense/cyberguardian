@@ -247,3 +247,56 @@ def verify_signed_checkpoint(snapshot: Path, key: bytes) -> dict[str, Any]:
         "sha256": actual_digest,
         "manifest_path": str(manifest_path),
     }
+
+
+
+def restore_signed_checkpoint(
+    snapshot: Path, destination: Path, key: bytes, *, overwrite: bool = False
+) -> dict[str, Any]:
+    """Restore a verified checkpoint atomically to a separate ledger path."""
+    snapshot = Path(snapshot)
+    destination = Path(destination)
+    if snapshot.resolve() == destination.resolve():
+        raise ValueError("restore destination must differ from checkpoint snapshot")
+    verified = verify_signed_checkpoint(snapshot, key)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() and not overwrite:
+        raise FileExistsError("restore destination already exists; use explicit overwrite approval")
+    payload = snapshot.read_bytes()
+    fd, temp_name = tempfile.mkstemp(
+        prefix=destination.name + ".", suffix=".restore.tmp", dir=str(destination.parent)
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if overwrite:
+            os.replace(temp_name, destination)
+        else:
+            # A hard-link install is atomic and fails if another process created
+            # the destination after our preflight check.
+            os.link(temp_name, destination)
+            os.unlink(temp_name)
+        os.chmod(destination, 0o600)
+        dir_fd = os.open(str(destination.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+    restored = verify_ledger(destination)
+    if not restored["valid"] or restored["head"] != verified["head"]:
+        raise LedgerIntegrityError("restored ledger does not match verified checkpoint")
+    return {
+        "restored": True,
+        "destination": str(destination),
+        "records": restored["records"],
+        "head": restored["head"],
+        "sha256": verified["sha256"],
+    }
