@@ -23,6 +23,7 @@ def _remember_worker(store_path: str, start: int):
 
 def test_issue_memory_writes_are_atomic_private_and_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    monkeypatch.setattr(issue_memory, "MAX_ISSUES", 10)
     for value in range(issue_memory.MAX_ISSUES + 5):
         issue_memory.remember_issue(
             title=f"issue {value}", asset_id=f"asset-{value}", tags=["test"]
@@ -63,3 +64,17 @@ def test_update_issue_is_serialized_and_persists(tmp_path, monkeypatch):
     updated = issue_memory.update_issue(item["id"], status="resolved", notes=["closed"])
     assert updated["status"] == "resolved"
     assert issue_memory.list_issues(status="resolved")[0]["id"] == item["id"]
+
+
+
+def test_corrupt_issue_memory_fails_closed_without_rewriting(tmp_path, monkeypatch):
+    path = tmp_path / "issues.jsonl"
+    path.write_text("{broken-json}\\n")
+    monkeypatch.setattr(issue_memory, "STORE", path)
+    try:
+        issue_memory.remember_issue("new", "asset-new")
+    except issue_memory.IssueMemoryIntegrityError:
+        pass
+    else:
+        raise AssertionError("corrupt issue memory must block read-modify-write")
+    assert path.read_text() == "{broken-json}\\n"
