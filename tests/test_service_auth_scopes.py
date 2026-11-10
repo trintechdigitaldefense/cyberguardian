@@ -83,6 +83,14 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                 "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
                 ("asset-tenant-b", "tenant-b", "host-b"),
             )
+        main._mod.queue_agent_command(
+            asset_id="asset-tenant-b",
+            action="isolate_host",
+            target="asset-tenant-b",
+            parameters={},
+            pending_action_id="pending-tenant-b",
+            ttl_seconds=300,
+        )
         dashboard_headers = {"X-API-Key": dashboard_key, "X-Tenant-ID": "tenant-a"}
         missing_assertion = client.get("/v1/fleet", headers=dashboard_headers)
         assert missing_assertion.status_code == 401
@@ -162,3 +170,26 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             json={"client_mode": True, "tenant_id": "tenant-b"},
         )
         assert denied_body_override.status_code == 403
+
+        rollback_override = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST", path="/v1/rollback/asset-tenant-b",
+            request_id="integration-rollback-override",
+        )
+        denied_rollback_override = client.post(
+            "/v1/rollback/asset-tenant-b",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": rollback_override},
+            json={"reason": "cross-tenant test"},
+        )
+        assert denied_rollback_override.status_code == 403
+
+        gate_override = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST", path="/v1/gate/approve/pending-tenant-b",
+            request_id="integration-gate-override",
+        )
+        denied_gate_override = client.post(
+            "/v1/gate/approve/pending-tenant-b",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": gate_override},
+        )
+        assert denied_gate_override.status_code == 403
