@@ -122,7 +122,7 @@ def build_pdf(
     ))
     try:
         doc.build(body)
-        with open(temp_name, "rb") as handle:
+        with open(temp_name, "rb+") as handle:
             os.fsync(handle.fileno())
         os.chmod(temp_name, 0o600)
         os.replace(temp_name, out)
