@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest verified R4 branch commit:** `c5ad37e8e93537b52311306f5978ad818d776189` (signed checkpoint documentation and full R4 code; all six CI jobs passed).  
-**Latest full CI:** [run 42873533986](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42873533986) passed all six jobs on `c5ad37e8e93537b52311306f5978ad818d776189`: Python 3.10/3.11/3.12 (105 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
+**Latest verified R4 branch commit:** `609b6ba5fbb235bc369f9d1c99f5916ecc83e689` (signed audit checkpoint CLI regression coverage; all six CI jobs passed).  
+**Latest full CI:** [run 42873777649](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42873777649) passed all six jobs on `609b6ba5fbb235bc369f9d1c99f5916ecc83e689`: Python 3.10/3.11/3.12 (106 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
@@ -130,7 +130,7 @@ The reliability work now covers:
 - **Fleet lifecycle:** tenant-scoped dashboard fleet results project stale agents to offline and missing timestamps to unknown, while preserving revoked/disabled states.
 - **Reporting:** weekly client reports require an explicit tenant and tenant-scoped source requests; optional CSV scorecard export is atomic, owner-only and protected against spreadsheet formula injection.
 
-The latest 105-test Python 3.11 CI run validates queue concurrency/restart/reconnect, signed audit checkpoint verification and tamper rejection, audit chain, issue store, fleet projection and tenant-scoped PDF/CSV request/export logic. Subsequent audit snapshot-export CLI and documentation changes are awaiting CI on the latest branch head. These are code-level checks, not physical power-loss or Android/Termux filesystem fault-injection tests.
+The latest 106-test Python 3.11 CI run validates queue concurrency/restart/reconnect, signed audit checkpoint verification and tamper rejection, audit export/verify CLI behavior, audit chain, issue store, fleet projection and tenant-scoped PDF/CSV request/export logic. Subsequent audit snapshot-export CLI and documentation changes are awaiting CI on the latest branch head. These are code-level checks, not physical power-loss or Android/Termux filesystem fault-injection tests.
 
 See [R4 reliability acceptance](R4_RELIABILITY_ACCEPTANCE.md) for the detailed matrix. **R4 remains in progress:** independent off-host checkpoint storage and clean-instance restore/restart drill, issue retention/archive policy, fleet heartbeat/reconnect/revoke transitions, live Compose report export permissions, and the supervised detect-to-report workflow remain. R5 stays locked until R4 acceptance is complete.
 
