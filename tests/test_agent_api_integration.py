@@ -412,7 +412,8 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
 
 
 def test_gateway_middleware_propagates_verified_tenant_into_issue_memory(tmp_path, monkeypatch):
-    main = _load_gateway()
+    import main
+    main = importlib.reload(main)
     monkeypatch.setattr(main._issue_memory, "STORE", tmp_path / "issues.jsonl")
     monkeypatch.setattr(main._issue_memory, "ARCHIVE", tmp_path / "issues-archive.jsonl")
     request = SimpleNamespace(
