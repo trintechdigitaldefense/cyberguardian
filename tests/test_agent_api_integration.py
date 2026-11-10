@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "control-plane" / "api"
@@ -106,6 +107,56 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             },
         )
         assert registered.status_code == 200, registered.text
+
+        # The shared NAD service key may submit detections only for the
+        # tenant bound to the registered asset, never a caller-selected tenant.
+        def nad_request(tenant_header=None):
+            body = json.dumps({"asset_id": "host-a", "source": "nad-test"}).encode("utf-8")
+            request_headers = [
+                (b"x-api-key", ("nad-key-" + "c" * 40).encode("utf-8")),
+                (b"content-type", b"application/json"),
+            ]
+            if tenant_header:
+                request_headers.append((b"x-tenant-id", tenant_header.encode("utf-8")))
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/v1/detections",
+                "raw_path": b"/v1/detections",
+                "query_string": b"",
+                "headers": request_headers,
+                "client": ("127.0.0.1", 1234),
+                "server": ("testserver", 80),
+            }
+            sent = False
+
+            async def receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            return Request(scope, receive)
+
+        async def capture_nad_tenant(request):
+            return {
+                "tenant_id": request.state.tenant_id,
+                "header_tenant": request.headers.get("X-Tenant-ID"),
+            }
+
+        nad_scoped = asyncio.run(
+            main._verify_dashboard_operator(nad_request(), capture_nad_tenant)
+        )
+        assert nad_scoped == {"tenant_id": "tenant-a", "header_tenant": "tenant-a"}
+        nad_spoofed = asyncio.run(
+            main._verify_dashboard_operator(nad_request("tenant-b"), capture_nad_tenant)
+        )
+        assert nad_spoofed.status_code == 403
+
         with main._mod.db() as conn:
             first_seen = conn.execute(
                 "SELECT last_seen FROM assets WHERE asset_id=?", ("host-a",)
