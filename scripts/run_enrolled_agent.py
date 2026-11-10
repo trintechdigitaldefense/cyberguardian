@@ -96,7 +96,7 @@ def build_agent_environment(
 
     source_env = os.environ if base_env is None else base_env
     env = {key: str(value) for key, value in source_env.items() if key in SAFE_AGENT_ENV_KEYS}
-    controller = str(api_url or env.get("CYBERGUARDIAN_API") or env.get("CG_CONTROLLER_URL") or "http://127.0.0.1:8080").strip()
+    controller = str(api_url or source_env.get("CYBERGUARDIAN_API") or source_env.get("CG_CONTROLLER_URL") or "http://127.0.0.1:8080").strip()
     controller = _validate_api_url(controller)
 
     env.update({
