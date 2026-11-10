@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Provision, rotate, or revoke one CyberGuardian agent's credentials.
 
-Run on the controller host. Secrets are printed once unless --env-file is used.
-Never commit data/ or a generated agent environment file.
+Run on the controller host. Secrets are stored in the protected controller registry and are never printed.
+Use scripts/run_enrolled_agent.py to start a device directly from that registry.
 """
 from __future__ import annotations
 
@@ -181,10 +181,9 @@ def main() -> int:
         print("The file contains secrets. Do not print, paste, or commit it.")
         return 0
 
-    print("# Copy these values to this agent's protected environment file.")
-    for key, value in env_values.items():
-        print(f"{key}={value}")
-    print("Provision these secrets securely; do not paste them into GitHub or chat.")
+    print(f"Enrolled {asset_id} for tenant {tenant_id}; per-device credentials are stored in the protected controller registry.")
+    print(f"Start this device with: CG_AGENT_ASSET_ID={asset_id} python3 scripts/run_enrolled_agent.py --asset-id {asset_id}")
+    print("No secret values were displayed.")
     return 0
 
 
