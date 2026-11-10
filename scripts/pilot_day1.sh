@@ -1,65 +1,72 @@
 #!/usr/bin/env bash
-# CyberGuardian one-click pilot pack — day-1 checklist
+# CyberGuardian owner-operated pilot smoke pack.
+# Never prints or places credentials in shell command-line arguments.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "=============================================="
-echo " CyberGuardian Pilot Day-1 Pack"
+echo " CyberGuardian R4 Owner Pilot Smoke Pack"
 echo "=============================================="
+echo "Scope: local synthetic lab only; no client networks."
 
-if [ ! -f data/credentials.json ]; then
-  echo "[1/6] Creating credentials..."
+if [ ! -f "${CG_DATA_DIR:-$ROOT/data}/credentials.json" ]; then
+  echo "[1/5] Creating local credentials..."
   bash scripts/setup_credentials.sh
 else
-  echo "[1/6] Credentials present"
+  echo "[1/5] Local credentials file present"
 fi
 
-KEY=$(python3 -c "import json;print(json.load(open('data/credentials.json')).get('api_key',''))" 2>/dev/null || true)
-AGENT_KEY=$(python3 -c "import json;print(json.load(open('data/credentials.json')).get('agent_api_key',''))" 2>/dev/null || true)
+# Keep all standalone services on loopback and do not start a bootstrap agent.
+export CG_HARDENED=1
+export CG_DISABLE_LOCAL_AGENT=1
 API="${CG_API:-http://127.0.0.1:8080}"
 
-echo "[2/6] Checking API health..."
-if ! curl -sf --max-time 3 "$API/health" >/dev/null 2>&1; then
-  echo "       API not up — starting stack..."
-  if [ -x ./start.sh ]; then
-    ./start.sh || true
-    sleep 3
-  else
-    echo "       start.sh missing — start services manually"
-  fi
+echo "[2/5] Checking API health..."
+if ! curl -fsS --max-time 3 "$API/health" >/dev/null 2>&1; then
+  echo "       API not running; starting hardened local services..."
+  ./start.sh
 fi
-curl -sf --max-time 5 "$API/health" && echo || { echo "API still down"; exit 1; }
 
-echo "[3/6] Ensuring Client Mode ON..."
-curl -sf --max-time 5 -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"client_mode":true}' "$API/v1/client-mode" | head -c 200
-echo
+echo "[3/5] Verifying service health..."
+bash scripts/client_health.sh
 
-echo "[4/6] Health script..."
-bash scripts/client_health.sh || true
-echo "[5/6] Dry-run (expect auto-remediate blocked)..."
-bash scripts/dry_run_pilot.sh || true
+echo "[4/5] Running synthetic dry-run..."
+CG_API="$API" bash scripts/dry_run_pilot.sh
 
-echo "[6/6] Pilot scorecard..."
-curl -sf --max-time 5 -H "X-API-Key: $KEY" "$API/v1/pilot/scorecard" | python3 -m json.tool 2>/dev/null || \
-  curl -sf --max-time 5 -H "X-API-Key: $KEY" "$API/v1/pilot/scorecard"
-echo
+echo "[5/5] Retrieving pilot scorecard (credentials stay inside Python)..."
+CG_API="$API" python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+api = os.environ.get("CG_API", "http://127.0.0.1:8080").rstrip("/")
+data_dir = Path(os.environ.get("CG_DATA_DIR", "data"))
+credentials = json.loads((data_dir / "credentials.json").read_text(encoding="utf-8"))
+key = credentials.get("api_key")
+if not isinstance(key, str) or not key:
+    raise SystemExit("Missing administrator API key in protected credentials file")
+request = urllib.request.Request(
+    api + "/v1/pilot/scorecard",
+    headers={"X-API-Key": key, "Accept": "application/json"},
+)
+try:
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = response.read()
+        print(json.dumps(json.loads(payload), indent=2, sort_keys=True))
+except urllib.error.HTTPError as exc:
+    print(f"Scorecard request failed: HTTP {exc.code}", file=sys.stderr)
+    raise SystemExit(1)
+except (OSError, ValueError) as exc:
+    print(f"Scorecard request failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 echo "=============================================="
-echo " DAY-1 CHECKLIST"
-echo "=============================================="
-echo " [ ] Dashboard login works  →  http://127.0.0.1:3000"
-echo " [ ] Client Mode shows ON"
-echo " [ ] Agent registered (run agent with agent key)"
-echo " [ ] Scorecard mostly green"
-echo " [ ] Approve/reject a test gate item"
-echo ""
-echo "Agent example:"
-echo "  export CYBERGUARDIAN_API=$API"
-echo "  export CYBERGUARDIAN_API_KEY=\"$AGENT_KEY\""
-echo "  python3 agents/linux-ebpf/agent.py --interval 30"
-echo ""
-echo "Approve in dashboard queues a REAL host command."
-echo "Network isolate/block needs root on the agent host."
+echo " Smoke pack completed. Review dashboard and logs."
+echo " This is not R4 sign-off or client deployment approval."
+echo " No agent key or service secret has been printed."
 echo "=============================================="
