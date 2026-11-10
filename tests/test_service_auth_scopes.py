@@ -74,6 +74,11 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     importlib.reload(agent_identity)
     import main
     importlib.reload(main)
+    schema = main.app.openapi()
+    print("REPORT_TENANT_PARAMS_DEBUG", {
+        path: [p.get("name") for p in schema.get("paths", {}).get(path, {}).get("get", {}).get("parameters", [])]
+        for path in ("/v1/reports/weekly", "/v1/inventory/report", "/v1/risk/summary", "/v1/pilot/scorecard")
+    })
     from operator_context import CURRENT_OPERATOR
     operator_token = CURRENT_OPERATOR.set({
         "sub": "operator-a", "role": "admin", "tenant_id": "tenant-a",
