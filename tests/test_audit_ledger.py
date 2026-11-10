@@ -82,7 +82,7 @@ def test_export_creates_verified_consistent_snapshot(tmp_path):
 
 def test_export_refuses_corrupt_source(tmp_path):
     source = tmp_path / "audit.jsonl"
-    source.write_text('{"bad":true}\\n')
+    source.write_text('{"bad":true}\n')
     try:
         ledger.export_verified_ledger(source, tmp_path / "export.jsonl")
     except ledger.LedgerIntegrityError:
