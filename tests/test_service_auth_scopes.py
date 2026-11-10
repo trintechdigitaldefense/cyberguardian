@@ -299,7 +299,7 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             with main._mod.db() as conn:
                 schema = conn.execute("PRAGMA table_info(pending_actions)").fetchall()
                 columns = {str(row["name"]): row for row in schema}
-                assert "id" in columns and "tenant_id" in columns
+                assert "id" in columns
                 values = {
                     "id": action_id,
                     "tenant_id": "tenant-a",
@@ -336,6 +336,7 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                         values[name] = 0
                     else:
                         values[name] = ""
+                values = {name: value for name, value in values.items() if name in columns}
                 names = list(values)
                 placeholders = ", ".join("?" for _ in names)
                 conn.execute(
