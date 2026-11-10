@@ -48,6 +48,7 @@ if _spec is None or _spec.loader is None:
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["cg_api_main"] = _mod
 _spec.loader.exec_module(_mod)
+import issue_memory as _issue_memory
 app = _mod.app
 
 
