@@ -113,6 +113,10 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                 ("asset-tenant-a-stale", "tenant-a", "host-a-stale"),
             )
             conn.execute(
+                "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
+                ("asset-tenant-a-revoked", "tenant-a", "host-a-revoked"),
+            )
+            conn.execute(
                 "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
                 (time.time(), "asset-tenant-a"),
             )
@@ -124,6 +128,17 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                 "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
                 (time.time(), "asset-tenant-b"),
             )
+            conn.execute(
+                "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
+                (time.time(), "asset-tenant-a-revoked"),
+            )
+        agent_credentials.write_agent_credentials({
+            "asset-tenant-a-revoked": {
+                "tenant_id": "tenant-a", "api_key": "revoked-key",
+                "identity_secret": "revoked-identity", "command_secret": "revoked-command",
+                "status": "revoked",
+            }
+        })
         main._mod.queue_agent_command(
             asset_id="asset-tenant-b",
             action="isolate_host",
@@ -170,6 +185,9 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
         assert fresh_asset["lifecycle"] == "online", authorized.text
         assert stale_asset["lifecycle"] == "offline", authorized.text
         assert stale_asset["stale"] is True, authorized.text
+        revoked_asset = next(item for item in fleet_items if item.get("asset_id") == "asset-tenant-a-revoked")
+        assert revoked_asset["lifecycle"] == "revoked", authorized.text
+        assert revoked_asset["status"] == "revoked", authorized.text
 
         audit_assertion = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
