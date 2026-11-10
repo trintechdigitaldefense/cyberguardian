@@ -457,7 +457,11 @@ def export_archived_issues(destination: Path, tenant_id: str) -> Dict[str, Any]:
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temp_name, destination)
+            # Link creation is atomic and fails if a destination appeared
+            # after the preflight check; unlike replace(), it cannot overwrite
+            # a concurrently-created client export.
+            os.link(temp_name, destination, follow_symlinks=False)
+            os.unlink(temp_name)
             os.chmod(destination, 0o600)
             dir_fd = os.open(str(destination.parent), os.O_RDONLY)
             try:
