@@ -227,6 +227,7 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             assert len(rows) == 1
             assert rows[0]["last_seen"] > first_seen
 
+
         wrong_tenant_registration = client.post(
             "/v1/assets/register",
             headers={**headers, "X-Tenant-ID": "tenant-b"},
@@ -430,3 +431,74 @@ def test_gateway_middleware_propagates_verified_tenant_into_issue_memory(tmp_pat
     assert result["tenant_id"] == "tenant-a"
     assert main._issue_memory.list_issues(tenant_id="tenant-a")[0]["id"] == result["id"]
     assert main._issue_memory.list_issues(tenant_id="tenant-b") == []
+
+
+def test_detection_idempotency_replays_stored_response_without_rehandling(tmp_path):
+    import main
+    from starlette.responses import StreamingResponse
+
+    main = importlib.reload(main)
+    main._mod.DB_PATH = tmp_path / "idempotency.sqlite3"
+    payload = {
+        "asset_id": "asset-a",
+        "tenant_id": "tenant-a",
+        "title": "replay-safe detection",
+    }
+    canonical = json.dumps(
+        {"kind": "POST", "path": "/v1/detections", "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    event_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    calls = []
+
+    def request():
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/detections",
+            "raw_path": b"/v1/detections",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"x-tenant-id", b"tenant-a"),
+                (b"x-cg-event-id", event_id.encode("ascii")),
+            ],
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+        }
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        return Request(scope, receive)
+
+    async def handle(_request):
+        calls.append("handled")
+        content = json.dumps({"accepted": True, "count": len(calls)})
+        return StreamingResponse(iter([content.encode("utf-8")]), media_type="application/json")
+
+    first = asyncio.run(main._agent_event_idempotency(request(), handle))
+    second = asyncio.run(main._agent_event_idempotency(request(), handle))
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.body == second.body
+    assert second.headers.get("x-cg-idempotent-replay") == "true"
+    assert calls == ["handled"]
+    with main._mod.db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM cg_agent_idempotency WHERE tenant_id=? AND asset_id=? AND event_id=?",
+            ("tenant-a", "asset-a", event_id),
+        ).fetchone()[0]
+    assert count == 1
