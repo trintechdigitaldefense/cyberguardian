@@ -19,7 +19,7 @@ MAX_ISSUES = 2000
 
 
 class IssueMemoryIntegrityError(RuntimeError):
-    \"\"\"Raised when issue-memory JSONL contains malformed evidence.\"\"\"
+    """Raised when issue-memory JSONL contains malformed evidence."""
 
 
 @contextmanager
