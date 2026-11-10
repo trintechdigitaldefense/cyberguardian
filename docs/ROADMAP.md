@@ -120,23 +120,19 @@ R3 is accepted for the engineering roadmap. This is engineering/CI acceptance, n
 
 ## R4 implementation progress (2026-11-10)
 
-**Latest verified R4 code commit:** `ae1126fdd0cd6cf3b303f1155b33709d9aef3118`  
-**CI evidence:** [run 42869693720](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42869693720) passed all six jobs on this exact commit.
+**Latest verified R4 code checkpoint:** commit `1ce29a6910908d4114e49078ecff413428523ae8`; [run 42871748997](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42871748997) passed all six CI jobs and 99 Python tests.
 
-The first R4 engineering slice hardens `agents/linux-ebpf/offline_queue.py`:
+The reliability work now covers:
 
-- Serializes writers with an advisory file lock, including concurrent agent processes.
-- Writes JSONL through a same-directory temporary file, fsyncs file contents, atomically replaces the queue, and fsyncs the parent directory.
-- Restricts queue, lock and status files to owner-only permissions where supported.
-- Enforces record and byte limits. On overflow, rejects the newest event and preserves all already-pending events; overflow is visible in connectivity status.
-- Deduplicates identical pending events by a stable content hash.
-- Removes a record only when the delivery callback acknowledges it; failed delivery retains the record with bounded exponential backoff.
-- Bounds each flush batch and retains malformed records for operator inspection rather than silently discarding them.
-- Agent POST handling now reports queue overflow explicitly instead of masking it or evicting older telemetry.
+- **Offline queue:** concurrent writer/flusher locking, atomic replace + fsync, owner-only permissions, record/byte caps, overflow rejection preserving older pending events, content dedupe, acknowledgement-only removal, bounded exponential backoff, bounded flush and corrupt-record retention. The queue lock is released during HTTP delivery so new events are not blocked by slow network calls.
+- **Audit:** a separate append-only SHA-256 hash chain receives gateway audit writes. Chain verification, tamper detection, and consistent verified snapshot export CLIs are implemented. Corrupt chains fail closed.
+- **Issue memory:** locked read/modify/write, atomic fsync/replace, owner-only permissions, bounded retention and fail-closed handling of malformed JSON.
+- **Fleet lifecycle:** tenant-scoped dashboard fleet results project stale agents to offline and missing timestamps to unknown, while preserving revoked/disabled states.
+- **Reporting:** weekly client reports require an explicit tenant and tenant-scoped source requests; optional CSV scorecard export is atomic, owner-only and protected against spreadsheet formula injection.
 
-New `tests/test_offline_queue.py` covers durability/permissions, deduplication, overflow preservation, acknowledgement-only deletion, retry timing, bounded flush, concurrent writers and corrupt-record retention. GitHub Actions run 42869693720 passed Python 3.10/3.11/3.12, Docker API, Compose and containment jobs. This verifies code-level queue behavior; it is not a physical power-loss or filesystem fault-injection test.
+The 99-test CI run validates the queue, audit chain, issue store, fleet projection and tenant-scoped PDF/CSV request/export logic. Subsequent audit snapshot-export CLI and documentation changes are awaiting CI on the latest branch head. These are code-level checks, not physical power-loss or Android/Termux filesystem fault-injection tests.
 
-**R4 remains in progress.** Next: durable/tamper-evident audit and action-history verification, tenant-safe issue persistence, fleet lifecycle/staleness tests, report provenance/export permissions, and the supervised detect-to-report integration workflow. Then perform a full restart/recovery and tenant-boundary matrix. R5 remains locked until R4 acceptance is complete.
+See [R4 reliability acceptance](R4_RELIABILITY_ACCEPTANCE.md) for the detailed matrix. **R4 remains in progress:** audit restore/restart and remote checkpoint verification, issue retention/archive policy, fleet heartbeat/reconnect/revoke transitions, live Compose report export permissions, and the supervised detect-to-report workflow remain. R5 stays locked until R4 acceptance is complete.
 
 ## Immediate work order
 
