@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _ensure_private_output_dir(directory: Path) -> None:
     directory = Path(directory)
+    if directory.is_symlink():
+        raise PermissionError(f"report output directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if stat.S_IMODE(directory.stat().st_mode) & 0o077:
         raise PermissionError(f"report output directory must be private (0700): {directory}")
@@ -81,6 +83,8 @@ def build_pdf(
         raise RuntimeError("ReportLab is required to generate a client PDF; install dashboard/report dependencies") from exc
 
     out = Path(out)
+    if out.is_symlink():
+        raise PermissionError("PDF output must not be a symlink")
     if not str(tenant_id).strip() or str(scorecard.get("tenant_id") or "") != str(tenant_id):
         raise RuntimeError("PDF export tenant identity is missing or does not match")
     _ensure_private_output_dir(out.parent)
@@ -151,6 +155,8 @@ def _safe_csv_cell(value) -> str:
 def build_csv(scorecard: dict, out: Path, *, tenant_id: str) -> Path:
     """Atomically export tenant-scoped scorecard rows with spreadsheet formula protection."""
     out = Path(out)
+    if out.is_symlink():
+        raise PermissionError("CSV output must not be a symlink")
     _ensure_private_output_dir(out.parent)
     if not str(tenant_id).strip() or str(scorecard.get("tenant_id") or "") != str(tenant_id):
         raise RuntimeError("CSV export tenant identity is missing or does not match")
