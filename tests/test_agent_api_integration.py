@@ -70,7 +70,7 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
                 "identity_sig": "0" * 64,
             },
         )
-        assert invalid_identity.status_code == 403, invalid_identity.text
+        assert invalid_identity.status_code == 401, invalid_identity.text
 
         admin_key_registration = client.post(
             "/v1/assets/register",
