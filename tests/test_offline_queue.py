@@ -267,3 +267,30 @@ def test_queue_refuses_shared_directory_without_chmodding_it(tmp_path):
     else:
         raise AssertionError("shared queue directory must be rejected")
     assert shared.stat().st_mode & 0o777 == 0o755
+
+
+
+def test_concurrent_flushers_are_serialized(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/v1/detections", {"asset_id": "asset-a"})
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    calls = []
+
+    def post_fn(path, payload, record_id=None):
+        calls.append(record_id)
+        callback_started.set()
+        release_callback.wait(timeout=2)
+        return True, {"status": "accepted"}
+
+    first = threading.Thread(target=queue.flush, args=(post_fn,), kwargs={"now": 100})
+    second = threading.Thread(target=queue.flush, args=(post_fn,), kwargs={"now": 100})
+    first.start()
+    assert callback_started.wait(timeout=2)
+    second.start()
+    release_callback.set()
+    first.join(timeout=3)
+    second.join(timeout=3)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(calls) == 1
+    assert queue.pending_count() == 0
