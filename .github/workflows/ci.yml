@@ -230,6 +230,17 @@ jobs:
           print(json.dumps(agent_credentials.get_agent_credential("compose-host")))
           PY
           chmod 600 "$DATA_DIR/compose-agent-credential.json"
+          docker compose -p "$PROJECT" exec -T api python - <<'PY'
+          import main
+          main._mod.queue_agent_command(
+              asset_id="compose-host",
+              action="escalate",
+              target="compose-host",
+              parameters={"reason": "R4 CI safe non-disruptive execution"},
+              pending_action_id="r4-ci-safe-escalate",
+              ttl_seconds=300,
+          )
+          PY
           CG_AGENT_TEST_CREDENTIAL_FILE="$DATA_DIR/compose-agent-credential.json" python3 "$ROOT/scripts/test_r4_supervised_workflow.py"
   containment-integration:
     runs-on: ubuntu-latest
