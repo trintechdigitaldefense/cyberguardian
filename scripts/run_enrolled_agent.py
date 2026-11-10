@@ -34,7 +34,12 @@ def build_agent_environment(
     api_key = str(record.get("api_key") or "").strip()
     identity_secret = str(record.get("identity_secret") or "").strip()
     command_secret = str(record.get("command_secret") or "").strip()
-    if not tenant_id or not api_key or len(identity_secret.encode("utf-8")) < 32 or len(command_secret.encode("utf-8")) < 32:
+    if (
+        not tenant_id
+        or len(api_key.encode("utf-8")) < 32
+        or len(identity_secret.encode("utf-8")) < 32
+        or len(command_secret.encode("utf-8")) < 32
+    ):
         raise PermissionError("enrollment record is incomplete; refusing to start the agent")
 
     env = dict(base_env or os.environ)
