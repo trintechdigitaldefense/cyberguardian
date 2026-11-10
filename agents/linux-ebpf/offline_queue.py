@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import inspect
 import json
 import os
 import tempfile
@@ -193,7 +194,20 @@ class OfflineQueue:
             try:
                 if "_corrupt_line" in record:
                     raise ValueError("corrupt queue record retained for operator inspection")
-                ok, _response = post_fn(record["path"], record["payload"])
+                try:
+                    signature = inspect.signature(post_fn)
+                    accepts_record_id = (
+                        "record_id" in signature.parameters
+                        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
+                    )
+                except (TypeError, ValueError):
+                    accepts_record_id = False
+                if accepts_record_id:
+                    ok, _response = post_fn(
+                        record["path"], record["payload"], record_id=record_id
+                    )
+                else:
+                    ok, _response = post_fn(record["path"], record["payload"])
                 if not ok:
                     raise RuntimeError("delivery callback did not acknowledge the record")
                 outcomes[record_id] = ("ack", None)
