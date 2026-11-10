@@ -9,6 +9,7 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,37 @@ from runtime_paths import DATA_DIR
 STORE = DATA_DIR / "issue_memory.jsonl"
 MAX_ISSUES = 2000
 MAX_ARCHIVED_ISSUES = 10000
+_CURRENT_TENANT = ContextVar("cg_issue_memory_tenant", default=None)
+
+
+def set_current_tenant(tenant_id: Optional[str]):
+    value = str(tenant_id or "").strip() or None
+    return _CURRENT_TENANT.set(value)
+
+
+def reset_current_tenant(token) -> None:
+    _CURRENT_TENANT.reset(token)
+
+
+def current_tenant_id() -> Optional[str]:
+    value = _CURRENT_TENANT.get()
+    return str(value).strip() if value else None
+
+
+def _production_mode() -> bool:
+    return (
+        os.environ.get("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+        or os.environ.get("CG_REQUIRE_AGENT_IDENTITY", "0").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+
+def _effective_tenant(tenant_id: Optional[str]) -> str:
+    value = str(tenant_id or current_tenant_id() or "").strip()
+    if not value:
+        if _production_mode():
+            raise PermissionError("tenant context is required for issue-memory access")
+        return "default"
+    return value
 
 
 class IssueMemoryIntegrityError(RuntimeError):
@@ -52,8 +84,9 @@ def _read_all() -> List[Dict[str, Any]]:
                 continue
             try:
                 item = json.loads(line)
-                if isinstance(item, dict):
-                    out.append(item)
+                if not isinstance(item, dict) or not item.get("id"):
+                    raise ValueError("issue-memory record has an invalid schema")
+                out.append(item)
             except (ValueError, TypeError) as exc:
                 raise IssueMemoryIntegrityError(
                     f"invalid issue-memory JSON at line {len(out) + 1}"
@@ -152,7 +185,13 @@ def _write_all(items: List[Dict[str, Any]]) -> None:
             pass
 
 
-def list_archived_issues(limit: int = MAX_ARCHIVED_ISSUES) -> List[Dict[str, Any]]:
+def list_archived_issues(
+    limit: int = MAX_ARCHIVED_ISSUES, tenant_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    try:
+        tenant = _effective_tenant(tenant_id)
+    except PermissionError:
+        return []
     archive = _archive_path()
     if not archive.exists():
         return []
@@ -171,12 +210,13 @@ def list_archived_issues(limit: int = MAX_ARCHIVED_ISSUES) -> List[Dict[str, Any
                 raise IssueMemoryIntegrityError(
                     f"invalid issue archive record at line {line_number}"
                 )
-            out.append(item)
+            if not tenant or str(item.get("tenant_id") or "") == tenant:
+                out.append(item)
     return out[-max(0, min(int(limit), MAX_ARCHIVED_ISSUES)):]
 
-def fingerprint(title: str, asset_id: str, tags=None) -> str:
+def fingerprint(title: str, asset_id: str, tags=None, tenant_id: str = "default") -> str:
     tags = tags or []
-    raw = f"{asset_id}|{title.strip().lower()}|{'|'.join(sorted(str(t).lower() for t in tags))}"
+    raw = f"{tenant_id}|{asset_id}|{title.strip().lower()}|{'|'.join(sorted(str(t).lower() for t in tags))}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -190,10 +230,12 @@ def remember_issue(
     description: str = "",
     detection_id: str = "",
     playbook_id: str = "",
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    tenant = _effective_tenant(tenant_id)
     with _store_lock():
         tags = tags or []
-        fp = fingerprint(title, asset_id, tags)
+        fp = fingerprint(title, asset_id, tags, tenant)
         items = _read_all()
         now = time.time()
         for item in items:
@@ -212,6 +254,7 @@ def remember_issue(
             "fingerprint": fp,
             "title": title,
             "asset_id": asset_id,
+            "tenant_id": tenant,
             "severity": severity,
             "source": source,
             "tags": tags,
@@ -232,19 +275,38 @@ def remember_issue(
         return record
 
 
-def list_issues(status: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+def list_issues(
+    status: Optional[str] = None,
+    limit: int = 100,
+    tenant_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    try:
+        tenant = _effective_tenant(tenant_id)
+    except PermissionError:
+        return []
     items = _read_all()
+    if tenant:
+        items = [item for item in items if str(item.get("tenant_id") or "") == tenant]
     items.sort(key=lambda item: item.get("last_seen") or 0, reverse=True)
     if status:
         items = [item for item in items if item.get("status") == status]
     return items[:max(0, min(int(limit), MAX_ISSUES))]
 
 
-def update_issue(issue_id: str, **fields) -> Optional[Dict[str, Any]]:
+def update_issue(
+    issue_id: str, tenant_id: Optional[str] = None, **fields
+) -> Optional[Dict[str, Any]]:
+    try:
+        tenant = _effective_tenant(tenant_id)
+    except PermissionError:
+        return None
+    fields.pop("tenant_id", None)
     with _store_lock():
         items = _read_all()
         for item in items:
-            if item.get("id") == issue_id:
+            if item.get("id") == issue_id and (
+                not tenant or str(item.get("tenant_id") or "") == tenant
+            ):
                 item.update({key: value for key, value in fields.items() if value is not None})
                 item["updated_at"] = time.time()
                 _write_all(items)
