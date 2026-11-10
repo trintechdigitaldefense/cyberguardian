@@ -27,6 +27,17 @@ On the controller host, run:
 python3 scripts/enroll_agent.py --asset-id linux-server-01 --tenant-id customer-a
 ```
 
+For a local Termux/Linux agent, avoid copying secrets from terminal output by writing a protected environment file directly:
+
+```sh
+python3 scripts/enroll_agent.py \
+  --asset-id android-termux-controller \
+  --tenant-id customer-a \
+  --env-file "$HOME/.config/cyberguardian/agent.env"
+```
+
+For a remote agent, supply its HTTPS controller URL with `--api-url https://controller.example.com`. Non-loopback HTTP URLs are rejected. The generated environment file is mode 0600 and its parent directory must be private (0700).
+
 The script stores the agent's API key, identity secret, command-signing secret, tenant and active status in:
 
 ```text
