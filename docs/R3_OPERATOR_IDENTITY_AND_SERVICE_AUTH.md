@@ -101,3 +101,18 @@ The first operator-assertion implementation slice is now present on the security
 Tests added in `tests/test_operator_context.py` cover valid claims, signature tampering, expiry/future time, method/path/tenant binding, nonce replay, weak secrets, and dashboard session-derived signing.
 
 **Important limitations — R3 is not accepted:** the gateway's current shared API credential is still used by dashboard and NAD workloads; exact default-deny service scopes have not yet been implemented. Gateway role enforcement for each route, cross-tenant object-ID substitution coverage, full Compose acceptance, CSP/throttle/startup hardening, and audit-schema integration review remain outstanding. The assertion middleware currently protects requests using the configured dashboard API key in production; non-production mode intentionally bypasses enforcement. Do not treat the present slice as client-ready or start R4.
+
+
+## Service-scope implementation progress (2026-11-10)
+
+A second implementation slice now separates workload credentials and applies default-deny route scopes:
+
+- `CYBERGUARDIAN_API_KEY` remains the administrator credential and is supplied only to the API gateway.
+- `CG_DASHBOARD_API_KEY` is supplied to the dashboard and gateway. The gateway allows only the dashboard's documented read routes and the explicit operator-action routes (client mode, gate approve/reject, rollback, benign feedback). The request must carry a verified operator assertion in production.
+- `CG_NAD_API_KEY` is supplied to NAD processor and gateway. It is restricted to `POST /v1/detections`; it cannot read fleet data or access approval, rollback, agent, or administrative routes.
+- Agent credentials continue to use their existing per-asset and per-tenant allowlist.
+- The API startup check requires all five administrator/workload/signing/decision secrets to be at least 32 bytes and pairwise distinct. Dashboard and NAD startup checks reject missing/weak workload credentials.
+- `deploy/docker/.env.example` now documents independently generated credentials. The dashboard and NAD containers no longer receive the administrator API key.
+- `service_auth.py` contains explicit default-deny scopes, with tests for allowed dashboard actions and denied agent/admin/NAD actions.
+
+**Still not accepted:** the full gateway integration test must prove that these service credentials are actually accepted/rejected at runtime, including a production-mode dashboard assertion and audit write. The API route allowlist must be checked against all UI routes after the route inventory is complete. The shared operator assertion secret remains a symmetric trust key; protect it as a server-only secret and rotate it using the documented deployment process. R3 remains in progress until the remaining acceptance checklist is evidenced.
