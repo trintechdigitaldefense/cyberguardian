@@ -11,7 +11,7 @@ launcher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(launcher)
 
 
-def test_enrolled_agent_launcher_uses_device_scoped_secrets_without_leaking():
+def test_enrolled_agent_launcher_uses_device_scoped_secrets_without_leaking(monkeypatch):
     record = {
         "tenant_id": "tenant-a",
         "api_key": "agent-api-key-" + "a" * 40,
@@ -19,7 +19,7 @@ def test_enrolled_agent_launcher_uses_device_scoped_secrets_without_leaking():
         "command_secret": "command-secret-" + "c" * 40,
         "status": "active",
     }
-    launcher.agent_credentials.get_agent_credential = lambda asset_id: record if asset_id == "asset-a" else None
+    monkeypatch.setattr(launcher.agent_credentials, "get_agent_credential", lambda asset_id: record if asset_id == "asset-a" else None)
     env = launcher.build_agent_environment(
         "asset-a",
         base_env={"PATH": "/usr/bin", "CG_DATA_DIR": "/secure/cg-data"},
@@ -36,8 +36,8 @@ def test_enrolled_agent_launcher_uses_device_scoped_secrets_without_leaking():
     assert env["CG_DATA_DIR"] == "/secure/cg-data"
 
 
-def test_enrolled_agent_launcher_refuses_revoked_or_unknown_device():
-    launcher.agent_credentials.get_agent_credential = lambda _asset_id: None
+def test_enrolled_agent_launcher_refuses_revoked_or_unknown_device(monkeypatch):
+    monkeypatch.setattr(launcher.agent_credentials, "get_agent_credential", lambda _asset_id: None)
     try:
         launcher.build_agent_environment("asset-revoked", base_env={})
     except PermissionError as exc:
@@ -46,14 +46,14 @@ def test_enrolled_agent_launcher_refuses_revoked_or_unknown_device():
         raise AssertionError("revoked device must not be launched")
 
 
-def test_enrolled_agent_launcher_refuses_incomplete_credentials():
-    launcher.agent_credentials.get_agent_credential = lambda _asset_id: {
+def test_enrolled_agent_launcher_refuses_incomplete_credentials(monkeypatch):
+    monkeypatch.setattr(launcher.agent_credentials, "get_agent_credential", lambda _asset_id: {
         "tenant_id": "tenant-a",
         "api_key": "agent-api-key-" + "a" * 40,
         "identity_secret": "short",
         "command_secret": "command-secret-" + "c" * 40,
         "status": "active",
-    }
+    })
     try:
         launcher.build_agent_environment("asset-a", base_env={})
     except PermissionError as exc:
