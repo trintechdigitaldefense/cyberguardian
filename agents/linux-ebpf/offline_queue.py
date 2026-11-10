@@ -19,7 +19,6 @@ QUEUE = Path.home() / ".cyberguardian" / "offline_queue.jsonl"
 STATUS = Path.home() / ".cyberguardian" / "connectivity.json"
 MAX_LINES = 500
 MAX_BYTES = 5 * 1024 * 1024
-MAX_RETRIES = 12
 BASE_BACKOFF_SECONDS = 5
 MAX_BACKOFF_SECONDS = 15 * 60
 
@@ -80,7 +79,7 @@ class OfflineQueue:
                     # silently discarding data during ordinary queue reads.
                     records.append({"id": "corrupt-" + hashlib.sha256(line.encode()).hexdigest(),
                                     "kind": "corrupt", "path": "", "payload": {},
-                                    "_corrupt_line": line.rstrip("\\n"), "attempts": 0,
+                                    "_corrupt_line": line.rstrip("\n"), "attempts": 0,
                                     "next_attempt_at": 0})
         return records
 
@@ -91,7 +90,7 @@ class OfflineQueue:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 for record in records:
-                    handle.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\\n")
+                    handle.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, self.path)
