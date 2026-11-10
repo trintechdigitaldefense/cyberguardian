@@ -126,9 +126,17 @@ values = [os.environ.get(name, "").strip() for name in names]
 if not values[0] or values[0] != str(stored.get("api_key") or ""):
     raise SystemExit("administrator API key must match data/credentials.json")
 if any(len(value.encode("utf-8")) < 32 for value in values):
-    raise SystemExit("all five production service credentials/secrets must be at least 32 bytes")
+    raise SystemExit("all five production service credentials/secrets must be at least 32 bytes and the audit checkpoint key must be configured")
 if len(set(values)) != len(values):
     raise SystemExit("administrator, dashboard, NAD, operator and decision secrets must all be unique")
+try:
+    audit_key = bytes.fromhex(str(stored.get("audit_checkpoint_key_hex") or ""))
+except ValueError:
+    raise SystemExit("audit checkpoint key must be valid hexadecimal")
+if len(audit_key) < 32:
+    raise SystemExit("audit checkpoint key must contain at least 32 random bytes")
+if audit_key in {value.encode("utf-8") for value in values}:
+    raise SystemExit("audit checkpoint key must be distinct from service credentials")
 PY
   then
     echo "ERROR: production service credentials are incomplete or invalid."
