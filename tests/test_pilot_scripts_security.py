@@ -28,6 +28,12 @@ def test_dry_run_supplies_explicit_tenant_context_for_issue_memory():
     assert "tenant context" in source
 
 
+def test_pilot_day1_keeps_scorecard_in_configured_tenant_scope():
+    source = (ROOT / "scripts" / "pilot_day1.sh").read_text(encoding="utf-8")
+    assert 'TENANT_ID="${CG_TENANT_ID:-default}"' in source
+    assert '"X-Tenant-ID": os.environ.get("CG_TENANT_ID", "default")' in source
+
+
 def test_client_health_script_fails_when_any_service_is_unhealthy():
     source = (ROOT / "scripts" / "client_health.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in source
