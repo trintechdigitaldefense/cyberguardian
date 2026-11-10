@@ -193,3 +193,19 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             headers={**dashboard_headers, "X-CG-Operator-Assertion": gate_override},
         )
         assert denied_gate_override.status_code == 403
+
+        denial_audit_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="GET", path="/v1/audit",
+            request_id="integration-denial-audit",
+        )
+        denial_audit = client.get(
+            "/v1/audit?limit=100",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": denial_audit_assertion},
+        )
+        assert denial_audit.status_code == 200, denial_audit.text
+        assert any(
+            item.get("event") == "operator_request_denied"
+            and item.get("actor") == "operator-a"
+            for item in denial_audit.json().get("items", [])
+        ), denial_audit.text
