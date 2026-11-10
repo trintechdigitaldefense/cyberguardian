@@ -223,7 +223,7 @@ async def logout_get():
 
 @app.post("/logout")
 async def logout(request: Request):
-    if err := _require_sess(request):
+    if err := _require_sess(request, {"admin", "operator", "analyst", "viewer"}):
         return err
     dashboard_auth.revoke_session(request.cookies.get(SESSION_COOKIE, ""))
     response = RedirectResponse("/login", status_code=303)
