@@ -234,6 +234,12 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
         return JSONResponse({"detail": "tenant response shape could not be validated"}, status_code=502)
     filtered = [item for item in payload[list_key] if isinstance(item, dict) and _item_matches_tenant(item, tenant_id)]
     if path == "/v1/fleet":
+        # Enrollment revocation is authoritative even if the last heartbeat
+        # left the inventory row marked online.
+        for item in filtered:
+            credential = get_agent_credential(str(item.get("asset_id") or ""), include_revoked=True)
+            if credential and str(credential.get("status") or "").lower() in {"revoked", "disabled"}:
+                item["status"] = str(credential["status"]).lower()
         try:
             stale_after = int(os.environ.get("CG_AGENT_STALE_AFTER_SECONDS", "180"))
         except ValueError:
