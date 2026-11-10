@@ -66,8 +66,11 @@ class OfflineQueue:
             self.status_path.parent,
             harden_default=(self.status_path.parent == default_queue_dir),
         )
+        lock_flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
         for lock_path in (self.lock_path, self.flush_lock_path):
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            if lock_path.is_symlink():
+                raise PermissionError(f"offline queue lock must not be a symlink: {lock_path}")
+            fd = os.open(str(lock_path), lock_flags, 0o600)
             try:
                 os.fchmod(fd, 0o600)
             finally:
@@ -80,9 +83,16 @@ class OfflineQueue:
                 inner.handle = None
             def __enter__(inner):
                 selected = lock_path or inner.owner.lock_path
-                fd = os.open(str(selected), os.O_CREAT | os.O_RDWR, 0o600)
-                os.fchmod(fd, 0o600)
-                inner.handle = os.fdopen(fd, "a+")
+                if selected.is_symlink():
+                    raise PermissionError(f"offline queue lock must not be a symlink: {selected}")
+                flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(str(selected), flags, 0o600)
+                try:
+                    os.fchmod(fd, 0o600)
+                    inner.handle = os.fdopen(fd, "a+")
+                except BaseException:
+                    os.close(fd)
+                    raise
                 fcntl.flock(inner.handle.fileno(), fcntl.LOCK_EX)
                 return inner
             def __exit__(inner, exc_type, exc, tb):
