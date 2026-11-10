@@ -44,6 +44,14 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
     main._mod.DB_PATH = tmp_path / "gateway.sqlite3"
     main._mod.GATE_CFG = tmp_path / "gate_config.json"
     main._mod.CREDS_PATH = tmp_path / "credentials.json"
+    main._mod.CREDS_PATH.write_text(
+        json.dumps({
+            "api_key": "admin-key-" + "a" * 40,
+            "audit_checkpoint_key_hex": "f" * 64,
+        }),
+        encoding="utf-8",
+    )
+    main._mod.CREDS_PATH.chmod(0o600)
 
     record = {
         "tenant_id": "tenant-a",
