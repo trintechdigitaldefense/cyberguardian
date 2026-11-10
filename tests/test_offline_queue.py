@@ -294,3 +294,17 @@ def test_concurrent_flushers_are_serialized(tmp_path):
     assert not first.is_alive() and not second.is_alive()
     assert len(calls) == 1
     assert queue.pending_count() == 0
+
+
+
+def test_queue_rejects_symlinked_storage_directory(tmp_path):
+    real = tmp_path / "private"
+    real.mkdir(mode=0o700)
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    try:
+        offline.OfflineQueue(linked / "queue.jsonl")
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked queue directory must be rejected")
