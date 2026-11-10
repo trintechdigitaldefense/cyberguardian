@@ -97,6 +97,11 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     main._mod.DB_PATH = data_dir / "gateway.sqlite3"
     main._mod.GATE_CFG = data_dir / "gate_config.json"
     main._mod.CREDS_PATH = data_dir / "credentials.json"
+    main._mod.CREDS_PATH.write_text(
+        json.dumps({"audit_checkpoint_key_hex": "9f" * 32}),
+        encoding="utf-8",
+    )
+    main._mod.CREDS_PATH.chmod(0o600)
 
     with TestClient(main.app) as client:
         with main._mod.db() as conn:
