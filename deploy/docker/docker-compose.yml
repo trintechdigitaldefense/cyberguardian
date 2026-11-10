@@ -29,6 +29,7 @@ services:
     build: ../../control-plane/nad-processor
     environment:
       API_URL: http://api:8080
+      CG_PRODUCTION: ${CG_PRODUCTION:-1}
       CG_NAD_API_KEY: ${CG_NAD_API_KEY:?set CG_NAD_API_KEY (unique 32+ random bytes)}
     depends_on: [api]
     networks: [cg-backend]
