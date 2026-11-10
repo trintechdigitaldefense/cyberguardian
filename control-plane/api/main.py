@@ -72,11 +72,18 @@ _original_write_audit = _mod.write_audit
 _original_is_admin = _mod.is_admin
 
 
-def _is_admin_with_operator():
+def _is_admin_with_operator(key: str):
     claims = _operator_context.CURRENT_OPERATOR.get()
-    if claims and claims.get("role") in {"admin", "operator"}:
+    dashboard_key = os.environ.get("CG_DASHBOARD_API_KEY", "")
+    if (
+        claims
+        and dashboard_key
+        and key
+        and hmac.compare_digest(key, dashboard_key)
+        and claims.get("role") in {"admin", "operator"}
+    ):
         return True
-    return _original_is_admin()
+    return _original_is_admin(key)
 
 
 _mod.is_admin = _is_admin_with_operator
