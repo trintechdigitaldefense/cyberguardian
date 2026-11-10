@@ -224,7 +224,13 @@ jobs:
           docker compose -p "$PROJECT" exec -T dashboard python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_NAD_API_KEY' not in os.environ"
           docker compose -p "$PROJECT" exec -T nad-processor python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_DASHBOARD_API_KEY' not in os.environ"
           docker compose -p "$PROJECT" ps
-          CG_DATA_DIR="$DATA_DIR" python3 "$ROOT/scripts/test_r4_supervised_workflow.py"
+          docker compose -p "$PROJECT" exec -T api python - <<'PY' > "$DATA_DIR/compose-agent-credential.json"
+          import json
+          import agent_credentials
+          print(json.dumps(agent_credentials.get_agent_credential("compose-host")))
+          PY
+          chmod 600 "$DATA_DIR/compose-agent-credential.json"
+          CG_AGENT_TEST_CREDENTIAL_FILE="$DATA_DIR/compose-agent-credential.json" python3 "$ROOT/scripts/test_r4_supervised_workflow.py"
   containment-integration:
     runs-on: ubuntu-latest
     steps:
