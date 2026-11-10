@@ -158,7 +158,7 @@ def test_restore_signed_checkpoint_is_atomic_and_requires_explicit_overwrite(tmp
 
 def test_audit_ledger_handles_short_writes_without_corrupting_chain(tmp_path, monkeypatch):
     path = tmp_path / "audit.jsonl"
-    original_write = audit_ledger.os.write
+    original_write = ledger.os.write
     calls = {"count": 0}
 
     def short_write(fd, data):
@@ -167,14 +167,14 @@ def test_audit_ledger_handles_short_writes_without_corrupting_chain(tmp_path, mo
             return original_write(fd, data[:7])
         return original_write(fd, data)
 
-    monkeypatch.setattr(audit_ledger.os, "write", short_write)
-    audit_ledger.append_event(path, {"action": "short-write-test"})
-    assert audit_ledger.verify_ledger(path)["valid"] is True
+    monkeypatch.setattr(ledger.os, "write", short_write)
+    ledger.append_event(path, {"action": "short-write-test"})
+    assert ledger.verify_ledger(path)["valid"] is True
 
 
 def test_audit_ledger_partial_write_fails_closed_on_next_append(tmp_path, monkeypatch):
     path = tmp_path / "audit.jsonl"
-    original_write = audit_ledger.os.write
+    original_write = ledger.os.write
     calls = {"count": 0}
 
     def partial_then_fail(fd, data):
@@ -183,19 +183,19 @@ def test_audit_ledger_partial_write_fails_closed_on_next_append(tmp_path, monkey
             return original_write(fd, data[:9])
         raise OSError("simulated crash during audit append")
 
-    monkeypatch.setattr(audit_ledger.os, "write", partial_then_fail)
+    monkeypatch.setattr(ledger.os, "write", partial_then_fail)
     try:
-        audit_ledger.append_event(path, {"action": "partial-write"})
+        ledger.append_event(path, {"action": "partial-write"})
     except OSError as exc:
         assert "simulated crash" in str(exc)
     else:
         raise AssertionError("partial write fault must propagate")
 
-    monkeypatch.setattr(audit_ledger.os, "write", original_write)
-    assert audit_ledger.verify_ledger(path)["valid"] is False
+    monkeypatch.setattr(ledger.os, "write", original_write)
+    assert ledger.verify_ledger(path)["valid"] is False
     try:
-        audit_ledger.append_event(path, {"action": "must-not-append-after-corruption"})
-    except audit_ledger.LedgerIntegrityError:
+        ledger.append_event(path, {"action": "must-not-append-after-corruption"})
+    except ledger.LedgerIntegrityError:
         pass
     else:
         raise AssertionError("append must fail closed after a partial ledger record")
