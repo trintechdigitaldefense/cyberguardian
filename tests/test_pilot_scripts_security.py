@@ -25,3 +25,16 @@ def test_client_health_script_fails_when_any_service_is_unhealthy():
     source = (ROOT / "scripts" / "client_health.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in source
     assert '[ "$fail" -eq 0 ]' in source
+
+
+def test_start_refuses_to_launch_services_when_credentials_are_missing():
+    source = (ROOT / "start.sh").read_text(encoding="utf-8")
+    missing_branch = source.split('if [ ! -f "$CREDENTIALS_FILE" ]; then', 1)[1].split("\nfi", 1)[0]
+    assert "Refusing to start any CyberGuardian service or agent." in missing_branch
+    assert "exit 1" in missing_branch
+
+
+def test_hardened_start_skips_bootstrap_agent_by_default():
+    source = (ROOT / "start.sh").read_text(encoding="utf-8")
+    assert "CG_ENABLE_LAB_BOOTSTRAP_AGENT" in source
+    assert "hardened-mode safety default" in source
