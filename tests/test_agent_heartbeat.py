@@ -119,3 +119,33 @@ def test_get_auth_rejection_marks_agent_for_shutdown(monkeypatch):
     assert not ok
     assert response["http_error"] == 401
     assert agent.AUTH_REJECTED is True
+
+
+
+def test_transient_server_error_is_queued_for_retry(monkeypatch):
+    class QueueSpy:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue(self, *args):
+            self.calls.append(args)
+            return len(self.calls)
+
+    queue = QueueSpy()
+    monkeypatch.setattr(agent, "queue", queue)
+    monkeypatch.setattr(agent, "AUTH_REJECTED", False)
+
+    def unavailable(_request, timeout=10):
+        raise agent.urllib.error.HTTPError(
+            "http://controller/v1/detections", 503, "Service Unavailable", {}, None
+        )
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", unavailable)
+    ok, response = agent.cg_api_post(
+        "/v1/detections", {"asset_id": "host-a"}, queue_on_failure=True
+    )
+    assert not ok
+    assert response["http_error"] == 503
+    assert agent.AUTH_REJECTED is False
+    assert len(queue.calls) == 1
+    assert queue.calls[0][1] == "/v1/detections"
