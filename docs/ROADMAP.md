@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest verified R4 queue commit:** `ae1126fdd0cd6cf3b303f1155b33709d9aef3118` (offline queue durability and retry fixes; all six CI jobs passed).  
-**Latest full CI:** [run 42869693720](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42869693720) passed all six jobs on `ae1126fdd0cd6cf3b303f1155b33709d9aef3118`: Python 3.10/3.11/3.12 (83 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
+**Latest verified R4 queue commit:** `ef1cc1efa3c1a0f408320c092568fc3681281ad8` (offline queue delivery moved outside the file lock with atomic acknowledgement reconciliation; all six CI jobs passed).  
+**Latest full CI:** [run 42872872418](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42872872418) passed all six jobs on `ef1cc1efa3c1a0f408320c092568fc3681281ad8`: Python 3.10/3.11/3.12 (101 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
