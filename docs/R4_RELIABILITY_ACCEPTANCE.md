@@ -126,3 +126,16 @@ Runbooks and an explicit client approval record are available on the `r4-operati
 - [R4 client data-retention approval](R4_RETENTION_APPROVAL.md) is intentionally **NOT APPROVED** until the client data owner and authorized approver complete and sign it. No retention periods have been assumed.
 
 These documents prepare the operational acceptance work; they do not claim that a physical drill, independent off-host restore, or policy approval has occurred. R4 remains IN PROGRESS and R5 remains locked until dated evidence is reviewed and all exit criteria pass.
+
+
+## Dashboard client PDF report centre (branch implementation; CI pending)
+
+The dashboard now includes a **Client PDF Reporting Centre** on the r4-operational-drill-runbooks branch. An authenticated operator can generate an on-demand PDF assembled from the current tenant-scoped monitoring summary, fleet view, approval queue, remembered issues, recent audit/activity records and the gateway's existing weekly digest. The report translates common security terms into everyday language, explains what alerts do and do not prove, shows the human-approval setting, and states source and coverage limitations.
+
+Implementation:
+- dashboard/client_reporting.py builds the PDF in memory; it does not write client report content to the dashboard filesystem.
+- GET /ops/reports/client.pdf requires an authenticated dashboard session and explicit tenant context. Each source request uses a request-bound operator assertion and tenant identity. If a source is unavailable or invalid, the endpoint fails closed and does not return a partial report.
+- The dashboard exposes a generate/download control; the response is marked no-store and served as a PDF attachment.
+- tests/test_dashboard_client_reporting.py covers PDF generation, glossary translation, tenant mismatch rejection and unknown metric handling.
+
+**Scope limitation:** this first version is a live snapshot plus the gateway's existing weekly digest. The audit/activity section is limited to the latest 100 records returned by the API. It does not yet provide arbitrary start/end date filters, a complete historical event export, scheduled delivery, or a formal client retention workflow. Do not describe it as exhaustive historical reporting. CI must pass on the exact PR head before treating the feature as accepted.
