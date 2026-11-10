@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Mapping, Optional
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 API_DIR = ROOT / "control-plane" / "api"
@@ -15,6 +16,23 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 import agent_credentials  # noqa: E402
+
+
+def _validate_api_url(value: str) -> str:
+    parsed = urlparse(str(value or "").strip())
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or any(ch in str(value) for ch in "\\r\\n\\t")
+    ):
+        raise ValueError("controller URL must be absolute HTTP(S) without credentials, query or fragment")
+    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("non-loopback controller URLs must use HTTPS")
+    return str(value).strip().rstrip("/")
 
 
 def build_agent_environment(
@@ -44,8 +62,7 @@ def build_agent_environment(
 
     env = dict(base_env or os.environ)
     controller = str(api_url or env.get("CYBERGUARDIAN_API") or env.get("CG_CONTROLLER_URL") or "http://127.0.0.1:8080").strip()
-    if not controller.startswith(("http://", "https://")):
-        raise ValueError("controller URL must use http:// or https://")
+    controller = _validate_api_url(controller)
 
     env.update({
         "CYBERGUARDIAN_API": controller,
