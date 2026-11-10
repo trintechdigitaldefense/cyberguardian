@@ -119,3 +119,68 @@ def test_issue_archive_capacity_fails_closed_without_dropping_active_records(tmp
         raise AssertionError("full issue archive must reject new records")
     assert [item["title"] for item in issue_memory.list_issues()] == ["second"]
     assert [item["title"] for item in issue_memory.list_archived_issues()] == ["first"]
+
+
+
+def test_issue_memory_records_are_tenant_isolated_and_updates_are_object_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    tenant_a = issue_memory.remember_issue(
+        "same finding", "asset-shared", tags=["malware"], tenant_id="tenant-a"
+    )
+    tenant_b = issue_memory.remember_issue(
+        "same finding", "asset-shared", tags=["malware"], tenant_id="tenant-b"
+    )
+    assert tenant_a["id"] != tenant_b["id"]
+    assert tenant_a["tenant_id"] == "tenant-a"
+    assert tenant_b["tenant_id"] == "tenant-b"
+
+    assert [item["id"] for item in issue_memory.list_issues(tenant_id="tenant-a")] == [tenant_a["id"]]
+    assert [item["id"] for item in issue_memory.list_issues(tenant_id="tenant-b")] == [tenant_b["id"]]
+    assert issue_memory.update_issue(
+        tenant_b["id"], tenant_id="tenant-a", status="resolved"
+    ) is None
+    updated = issue_memory.update_issue(
+        tenant_b["id"], tenant_id="tenant-b", status="resolved"
+    )
+    assert updated and updated["status"] == "resolved"
+    assert updated["tenant_id"] == "tenant-b"
+
+
+def test_issue_memory_uses_verified_tenant_context_for_reads_and_updates(tmp_path, monkeypatch):
+    monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    a = issue_memory.remember_issue("issue A", "asset-a", tenant_id="tenant-a")
+    b = issue_memory.remember_issue("issue B", "asset-b", tenant_id="tenant-b")
+    token = issue_memory.set_current_tenant("tenant-a")
+    try:
+        assert [item["id"] for item in issue_memory.list_issues()] == [a["id"]]
+        assert issue_memory.update_issue(b["id"], status="resolved") is None
+        updated = issue_memory.update_issue(a["id"], status="watching")
+        assert updated and updated["status"] == "watching"
+    finally:
+        issue_memory.reset_current_tenant(token)
+
+
+def test_production_issue_memory_fails_closed_without_tenant_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(issue_memory, "STORE", tmp_path / "issues.jsonl")
+    monkeypatch.setenv("CG_PRODUCTION", "1")
+    item = issue_memory.remember_issue("tenant issue", "asset-a", tenant_id="tenant-a")
+    assert issue_memory.list_issues() == []
+    assert issue_memory.update_issue(item["id"], status="resolved") is None
+    try:
+        issue_memory.remember_issue("missing tenant", "asset-b")
+    except PermissionError as exc:
+        assert "tenant context is required" in str(exc)
+    else:
+        raise AssertionError("production issue creation must require verified tenant context")
+
+
+def test_valid_json_with_invalid_issue_schema_fails_closed(tmp_path, monkeypatch):
+    path = tmp_path / "issues.jsonl"
+    path.write_text('null\n', encoding="utf-8")
+    monkeypatch.setattr(issue_memory, "STORE", path)
+    try:
+        issue_memory.list_issues()
+    except issue_memory.IssueMemoryIntegrityError:
+        pass
+    else:
+        raise AssertionError("invalid issue schema must not be silently discarded")
