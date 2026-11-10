@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import hmac
 import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import time
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from agent_credentials import active_agent_api_keys, find_agent_by_api_key, get_agent_credential, load_agent_credentials
 from command_signing import sign_envelope
