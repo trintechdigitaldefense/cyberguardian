@@ -42,7 +42,8 @@ echo "HTTP health:"
 fail=0
 check_http "decision (8001)" "http://127.0.0.1:8001/health" || fail=$((fail+1))
 check_http "api      (8080)" "http://127.0.0.1:8080/health" || fail=$((fail+1))
-check_http "dashboard(3000)" "http://127.0.0.1:3000/" || fail=$((fail+1))
+# The dashboard root redirects unauthenticated users to /login (HTTP 303); probe its public health endpoint instead.
+check_http "dashboard(3000)" "http://127.0.0.1:3000/health" || fail=$((fail+1))
 echo ""
 if [ ! -f "$ROOT/data/credentials.json" ]; then
   echo "Credentials: MISSING"
