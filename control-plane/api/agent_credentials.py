@@ -4,6 +4,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,6 +12,38 @@ from typing import Any, Dict, Optional
 from runtime_paths import DATA_DIR
 
 STORE = DATA_DIR / "agent_credentials.json"
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def _validate_agent_registry(agents: Dict[str, Dict[str, Any]]) -> None:
+    if not isinstance(agents, dict):
+        raise RuntimeError("agent credential store has an invalid schema")
+    seen_secrets: set[str] = set()
+    for asset_id, record in agents.items():
+        if not isinstance(asset_id, str) or not _IDENTIFIER.fullmatch(asset_id):
+            raise RuntimeError("agent credential store contains an invalid asset ID")
+        if not isinstance(record, dict):
+            raise RuntimeError("agent credential store contains an invalid enrollment record")
+        tenant_id = str(record.get("tenant_id") or "").strip()
+        status = str(record.get("status") or "active").strip().lower()
+        if not tenant_id or not _IDENTIFIER.fullmatch(tenant_id):
+            raise RuntimeError(f"agent enrollment {asset_id} has an invalid tenant ID")
+        if status not in {"active", "revoked"}:
+            raise RuntimeError(f"agent enrollment {asset_id} has an invalid status")
+        if status == "revoked":
+            continue
+        secrets_for_agent = [
+            str(record.get(field) or "").strip()
+            for field in ("api_key", "identity_secret", "command_secret")
+        ]
+        if any(len(value.encode("utf-8")) < 32 for value in secrets_for_agent):
+            raise RuntimeError(f"active agent enrollment {asset_id} has weak or missing credentials")
+        if len(set(secrets_for_agent)) != len(secrets_for_agent):
+            raise RuntimeError(f"active agent enrollment {asset_id} reuses a credential")
+        for value in secrets_for_agent:
+            if value in seen_secrets:
+                raise RuntimeError("active agent enrollments must not share credentials")
+            seen_secrets.add(value)
 
 
 def load_agent_credentials() -> Dict[str, Dict[str, Any]]:
@@ -26,9 +59,7 @@ def load_agent_credentials() -> Dict[str, Dict[str, Any]]:
     if not isinstance(raw, dict) or not isinstance(raw.get("agents"), dict):
         raise RuntimeError("agent credential store has an invalid schema")
     agents = raw["agents"]
-    if any(not isinstance(asset_id, str) or not isinstance(record, dict)
-           for asset_id, record in agents.items()):
-        raise RuntimeError("agent credential store contains an invalid enrollment record")
+    _validate_agent_registry(agents)
     return agents
 
 
@@ -61,6 +92,7 @@ def active_agent_api_keys() -> set[str]:
 
 
 def write_agent_credentials(agents: Dict[str, Dict[str, Any]]) -> None:
+    _validate_agent_registry(agents)
     DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     DATA_DIR.chmod(0o700)
     payload = json.dumps({"agents": agents}, indent=2, sort_keys=True)
