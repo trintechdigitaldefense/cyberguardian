@@ -75,7 +75,10 @@ Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash and
 
 ```bash
 CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
-DECISION_SERVICE_API_KEY=<paste-the-output-of-openssl-rand-hex-32>
+CG_DASHBOARD_API_KEY=<the distinct dashboard key printed by setup_credentials.sh>
+CG_NAD_API_KEY=<the distinct NAD key printed by setup_credentials.sh>
+CG_OPERATOR_ASSERTION_SECRET=<the distinct operator secret printed by setup_credentials.sh>
+DECISION_SERVICE_API_KEY=<the distinct decision-service key printed by setup_credentials.sh>
 CG_PRODUCTION=1
 CG_REQUIRE_AGENT_IDENTITY=1
 CG_COOKIE_SECURE=1
@@ -83,7 +86,7 @@ CG_ALLOWED_ORIGINS=https://your-dashboard.example
 CG_DATA_HOST_DIR=../../data
 ```
 
-Keep the decision-service key secret and never commit `.env`. The same `DECISION_SERVICE_API_KEY` is injected into the API gateway and decision service. Compose publishes the dashboard and API only on loopback; the decision service is reachable only on the private Compose network. For remote access, use an SSH tunnel or a TLS reverse proxy and set `CG_ALLOWED_ORIGINS` to the exact HTTPS dashboard origin.
+Keep every service secret and `.env` private; never commit them. All five administrator/service/signing values must be unique and at least 32 bytes. Compose injects the decision-service key into both the API gateway and decision service, and keeps dashboard, NAD and operator identities separate. Compose publishes the dashboard and API only on loopback; the decision service is reachable only on the private Compose network. For remote access, use an SSH tunnel or a TLS reverse proxy and set `CG_ALLOWED_ORIGINS` to the exact HTTPS dashboard origin.
 
 See [docs/HARDENING.md](docs/HARDENING.md) for the full production configuration and [docs/ROADMAP.md](docs/ROADMAP.md) for phase status.
 
@@ -111,7 +114,7 @@ python3 agents/linux-ebpf/agent.py --interval 60
 | Containment | Real SIGTERM/SIGKILL, nft/iptables (root for network) |
 | Rollback | Undo isolate via agent restore_network |
 | FP feedback | Mark benign → suppress restaging 14 days |
-| Identity | Host fingerprint + optional HMAC |
+| Identity | Per-agent fingerprint + HMAC; mandatory for production enrollment |
 
 See [docs/HARDENING.md](docs/HARDENING.md) and [docs/PILOT_SCOPE.md](docs/PILOT_SCOPE.md).
 
