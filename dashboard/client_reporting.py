@@ -110,8 +110,11 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         seen_ids = set()
         for entry in audit:
             source_id = str(entry.get("source_record_id") or "")
+            record_hash = str(entry.get("record_hash") or "")
             if not source_id or source_id in seen_ids:
                 raise ValueError("historical audit source IDs are missing or duplicated")
+            if re.fullmatch(r"[0-9a-f]{64}", record_hash) is None:
+                raise ValueError("historical audit record hash is missing or invalid")
             seen_ids.add(source_id)
             if str(entry.get("tenant_id") or "") != str(tenant_id):
                 raise ValueError("historical audit record tenant identity is missing or mismatched")
@@ -124,6 +127,9 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
             event_time = event_time.astimezone(timezone.utc)
             if not (period_start <= event_time < period_end):
                 raise ValueError("historical audit record falls outside the requested reporting period")
+        checkpoint_head = str(report_period.get("snapshot_head") or "")
+        if re.fullmatch(r"[0-9a-f]{64}", checkpoint_head) is None:
+            raise ValueError("historical audit checkpoint head is missing or invalid")
         if int(report_period.get("source_record_count", -1)) != len(audit):
             raise ValueError("historical audit source count does not match report records")
     pending = _items(gate, "pending")
@@ -261,7 +267,7 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
                 "Times are UTC. The start is inclusive and the end is exclusive.",
                 styles["CGSmall"],
             ))
-            source_rows = [["Time (UTC)", "Recorded activity", "Source record ID"]]
+            source_rows = [["Time (UTC)", "Recorded activity", "Source record ID", "Record SHA-256"]]
             for entry in audit:
                 event_time = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00"))
                 event_label = translate(entry.get("event") or entry.get("action") or "Recorded activity")
@@ -269,10 +275,11 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
                     event_time.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                     html.escape(_plain(event_label, 100)),
                     html.escape(_plain(entry["source_record_id"], 80)),
+                    html.escape(_plain(entry["record_hash"], 64)),
                 ])
             source_table = Table(
                 source_rows,
-                colWidths=[1.35*inch, 2.0*inch, 2.8*inch],
+                colWidths=[1.2*inch, 1.55*inch, 1.55*inch, 2.0*inch],
                 repeatRows=1,
             )
             source_table.setStyle(TableStyle([
