@@ -295,18 +295,18 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
 
         # Positive approval/rejection paths require a real tenant-bound
         # pending_actions row; a queued agent command alone is not an approval.
-        def seed_pending_action(action_id):
+        def seed_pending_action(action_id, tenant_id="tenant-a", asset_id="asset-tenant-a"):
             with main._mod.db() as conn:
                 schema = conn.execute("PRAGMA table_info(pending_actions)").fetchall()
                 columns = {str(row["name"]): row for row in schema}
                 assert "id" in columns
                 values = {
                     "id": action_id,
-                    "tenant_id": "tenant-a",
+                    "tenant_id": tenant_id,
                     "status": "pending",
                     "action": "isolate_host",
                     "action_type": "isolate_host",
-                    "target": "asset-tenant-a",
+                    "target": asset_id,
                     "created_at": time.time(),
                     "updated_at": time.time(),
                     "reason": "R4 supervised gate acceptance",
@@ -343,6 +343,25 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                     f"INSERT INTO pending_actions ({', '.join(names)}) VALUES ({placeholders})",
                     [values[name] for name in names],
                 )
+
+        approve_id = "pending-tenant-a-approve"
+        # A real tenant-B pending action must remain invisible to a
+        # tenant-A operator even when the legacy table has no tenant_id or
+        # asset_id columns and ownership must be resolved from its target.
+        seed_pending_action(
+            "pending-tenant-b-real", tenant_id="tenant-b", asset_id="asset-tenant-b"
+        )
+        cross_tenant_real_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST",
+            path="/v1/gate/approve/pending-tenant-b-real",
+            request_id="integration-gate-real-cross-tenant",
+        )
+        cross_tenant_real = client.post(
+            "/v1/gate/approve/pending-tenant-b-real",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": cross_tenant_real_assertion},
+        )
+        assert cross_tenant_real.status_code == 403, cross_tenant_real.text
 
         approve_id = "pending-tenant-a-approve"
         seed_pending_action(approve_id)
