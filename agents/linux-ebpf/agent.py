@@ -277,14 +277,20 @@ def _deliver_queued_record(path: str, payload: dict):
 
 def scan_once():
     global scan_count, baseline_names
-    poll_and_execute_commands()
+    # Refresh signed registration before polling commands. If the controller
+    # is temporarily unavailable, defer the GET rather than treating an
+    # unregistered asset's 403 as a revoked credential.
+    heartbeat_ok = heartbeat()
     if AUTH_REJECTED:
         print("[agent] credentials rejected; stop and re-enroll or rotate this device")
         raise SystemExit(2)
-    heartbeat()
-    if AUTH_REJECTED:
-        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
-        raise SystemExit(2)
+    if heartbeat_ok:
+        poll_and_execute_commands()
+        if AUTH_REJECTED:
+            print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+            raise SystemExit(2)
+    else:
+        print("[agent] command polling deferred until registration/heartbeat succeeds")
     fim_scan()
     net_scan()
     procs = list_processes()
