@@ -249,9 +249,8 @@ async def _verify_dashboard_operator(request: Request, call_next):
         )
         if not any(key == "tenant_id" for key, _ in query_pairs):
             query_pairs.append(("tenant_id", claims["tenant_id"]))
-        scoped_scope = dict(request.scope)
-        scoped_scope["query_string"] = urlencode(query_pairs).encode("ascii")
-        request = Request(scoped_scope, replay_operator_body)
+        request.scope["query_string"] = urlencode(query_pairs).encode("ascii")
+        request = Request(request.scope, replay_operator_body)
         request.state.operator_context = claims
         context_token = _operator_context.CURRENT_OPERATOR.set(claims)
         try:
