@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -160,7 +161,17 @@ async def _verify_dashboard_operator(request: Request, call_next):
         async def replay_operator_body():
             return {"type": "http.request", "body": raw_body, "more_body": False}
 
-        request = Request(request.scope, replay_operator_body)
+        # Pass the authenticated tenant into gateway handlers that expose a
+        # tenant_id query filter. Routes without that parameter ignore it.
+        query_pairs = parse_qsl(
+            request.scope.get("query_string", b"").decode("latin-1"),
+            keep_blank_values=True,
+        )
+        if not any(key == "tenant_id" for key, _ in query_pairs):
+            query_pairs.append(("tenant_id", claims["tenant_id"]))
+        scoped_scope = dict(request.scope)
+        scoped_scope["query_string"] = urlencode(query_pairs).encode("ascii")
+        request = Request(scoped_scope, replay_operator_body)
         request.state.operator_context = claims
         context_token = _operator_context.CURRENT_OPERATOR.set(claims)
         try:
