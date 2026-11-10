@@ -160,3 +160,53 @@ def test_corrupt_fingerprint_store_fails_closed(tmp_path, monkeypatch):
     else:
         raise AssertionError("corrupt identity history must not be silently reset")
     assert fingerprint_store.read_text(encoding="utf-8") == '{"host-a": '
+
+
+
+def test_agent_registry_rejects_weak_and_reused_active_secrets(tmp_path, monkeypatch):
+    store = tmp_path / "agent_credentials.json"
+    monkeypatch.setattr(agent_credentials, "STORE", store)
+    weak = {
+        "agents": {
+            "host-a": {
+                "tenant_id": "tenant-a",
+                "api_key": "short",
+                "identity_secret": "identity-" + "a" * 40,
+                "command_secret": "command-" + "b" * 40,
+                "status": "active",
+            }
+        }
+    }
+    store.write_text(json.dumps(weak), encoding="utf-8")
+    try:
+        agent_credentials.load_agent_credentials()
+    except RuntimeError as exc:
+        assert "weak or missing" in str(exc)
+    else:
+        raise AssertionError("weak active enrollment credentials must be rejected")
+
+    duplicate = {
+        "agents": {
+            "host-a": {
+                "tenant_id": "tenant-a",
+                "api_key": "shared-secret-" + "a" * 40,
+                "identity_secret": "identity-secret-" + "b" * 40,
+                "command_secret": "command-secret-" + "c" * 40,
+                "status": "active",
+            },
+            "host-b": {
+                "tenant_id": "tenant-b",
+                "api_key": "shared-secret-" + "a" * 40,
+                "identity_secret": "identity-secret-" + "d" * 40,
+                "command_secret": "command-secret-" + "e" * 40,
+                "status": "active",
+            },
+        }
+    }
+    store.write_text(json.dumps(duplicate), encoding="utf-8")
+    try:
+        agent_credentials.load_agent_credentials()
+    except RuntimeError as exc:
+        assert "must not share credentials" in str(exc)
+    else:
+        raise AssertionError("shared active credentials must be rejected")
