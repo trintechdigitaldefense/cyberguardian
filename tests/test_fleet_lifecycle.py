@@ -43,6 +43,7 @@ def test_unknown_timestamp_and_revoked_state_are_not_marked_online():
     assert result[0]["stale"] is True
     assert result[1]["lifecycle"] == "revoked"
     assert result[1]["status"] == "revoked"
+    assert result[1]["stale"] is False
 
 
 def test_fleet_projection_does_not_mutate_source_records():
