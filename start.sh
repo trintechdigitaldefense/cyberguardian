@@ -211,9 +211,13 @@ if [ "${CG_DISABLE_LOCAL_AGENT:-0}" = "1" ]; then
   echo "Local agent auto-start disabled (CG_DISABLE_LOCAL_AGENT=1)."
 elif [ "$STRICT_AGENT_MODE" = "1" ]; then
   AGENT_ENV_FILE="${CG_AGENT_ENV_FILE:-}"
-  if [ -z "$AGENT_ENV_FILE" ]; then
+  if [ -n "${CG_AGENT_ASSET_ID:-}" ]; then
+    echo "Starting enrolled agent ${CG_AGENT_ASSET_ID} from the protected controller registry..."
+    (cd "$ROOT" && nohup python3 -u scripts/run_enrolled_agent.py --asset-id "$CG_AGENT_ASSET_ID" \
+      --api http://127.0.0.1:8080 --interval 60 > /tmp/cg-agent.log 2>&1 &)
+  elif [ -z "$AGENT_ENV_FILE" ]; then
     echo "Production identity enforcement is enabled; skipping bootstrap agent."
-    echo "Enroll this device and set CG_AGENT_ENV_FILE to its protected agent environment file."
+    echo "Enroll a device with scripts/enroll_agent.py, then set CG_AGENT_ASSET_ID."
   else
     case "$AGENT_ENV_FILE" in /*) ;; *) AGENT_ENV_FILE="$ROOT/$AGENT_ENV_FILE" ;; esac
     if [ ! -f "$AGENT_ENV_FILE" ]; then
