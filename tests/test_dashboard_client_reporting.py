@@ -60,12 +60,14 @@ def historical_snapshot():
             "timestamp": "2026-11-01T00:00:00Z",
             "event": "agent_heartbeat",
             "tenant_id": "client-a",
+            "record_hash": "a" * 64,
         },
         {
             "source_record_id": "audit-record-002",
             "timestamp": "2026-11-05T12:30:00Z",
             "event": "operator_approval",
             "tenant_id": "client-a",
+            "record_hash": "b" * 64,
         },
     ]}
     return snapshot
