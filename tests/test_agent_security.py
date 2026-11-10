@@ -138,6 +138,9 @@ def test_agent_fingerprint_change_is_detected(tmp_path, monkeypatch):
     agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-one", "host")
     assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-one") is None
 
-    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-two", "host")
+    # Compare the new identity against the previous stored value before
+    # accepting and persisting the changed fingerprint.
     warning = agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two")
     assert warning and "fingerprint_changed" in warning
+    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-two", "host")
+    assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two") is None
