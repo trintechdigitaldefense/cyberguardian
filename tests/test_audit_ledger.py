@@ -127,3 +127,29 @@ def test_signed_checkpoint_requires_strong_key(tmp_path):
         assert "32 random bytes" in str(exc)
     else:
         raise AssertionError("weak checkpoint key must be rejected")
+
+
+
+def test_restore_signed_checkpoint_is_atomic_and_requires_explicit_overwrite(tmp_path):
+    source = tmp_path / "source.jsonl"
+    snapshot = tmp_path / "backup" / "audit.jsonl"
+    restored = tmp_path / "clean-instance" / "audit.jsonl"
+    key = b"r" * 32
+    ledger.append_event(source, {"event": "restore-test", "tenant": "tenant-a"})
+    ledger.export_signed_checkpoint(source, snapshot, key)
+
+    result = ledger.restore_signed_checkpoint(snapshot, restored, key)
+    assert result["restored"] is True
+    assert restored.read_bytes() == snapshot.read_bytes()
+    assert ledger.verify_ledger(restored)["valid"] is True
+    assert restored.stat().st_mode & 0o777 == 0o600
+
+    try:
+        ledger.restore_signed_checkpoint(snapshot, restored, key)
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("existing restore destination must be protected")
+
+    replacement = ledger.restore_signed_checkpoint(snapshot, restored, key, overwrite=True)
+    assert replacement["head"] == result["head"]
