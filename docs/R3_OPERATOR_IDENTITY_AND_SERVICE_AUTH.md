@@ -116,3 +116,14 @@ A second implementation slice now separates workload credentials and applies def
 - `service_auth.py` contains explicit default-deny scopes, with tests for allowed dashboard actions and denied agent/admin/NAD actions.
 
 **Still not accepted:** the full gateway integration test must prove that these service credentials are actually accepted/rejected at runtime, including a production-mode dashboard assertion and audit write. The API route allowlist must be checked against all UI routes after the route inventory is complete. The shared operator assertion secret remains a symmetric trust key; protect it as a server-only secret and rotate it using the documented deployment process. R3 remains in progress until the remaining acceptance checklist is evidenced.
+
+
+## Dashboard browser and login hardening progress (2026-11-10)
+
+- Dashboard and login pages now load external CSS and JavaScript from the same origin. Inline script/style blocks, inline event handlers and style attributes have been removed.
+- The CSP no longer permits `unsafe-inline`; script/style attributes are explicitly denied. Dynamic UI values are HTML-escaped before insertion, including quotes and apostrophes.
+- Production dashboard startup requires Secure cookies. HSTS is emitted only when Secure-cookie mode is enabled; terminate TLS at the trusted reverse proxy and keep the dashboard bound to localhost.
+- Login throttling uses the authenticated peer IP unless the immediate peer is inside `CG_TRUSTED_PROXY_IPS`. Only then is `X-Forwarded-For` parsed, walking the proxy chain from right to left and skipping only configured trusted networks. Invalid proxy CIDRs fail production startup.
+- Login-attempt storage is bounded by `CG_LOGIN_ATTEMPT_MAX_ROWS` (default 10,000) and pruned by the rolling window. Account-level throttling remains independent of source IP.
+
+CI tests cover the external assets/CSP, HTML escaping, trusted-proxy selection, invalid proxy configuration and bounded login-attempt storage. These are code-level checks; the deployment's actual TLS proxy chain and client-IP forwarding must still be verified during the clone-and-test exercise.
