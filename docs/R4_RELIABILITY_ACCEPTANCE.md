@@ -166,3 +166,19 @@ New acceptance tests:
 ## Exact-head automated acceptance evidence (2026-11-10)
 
 Candidate eee833045c5d4787d0740b273b9275e857776c46 passed GitHub Actions run [42915576796](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42915576796). All six jobs succeeded: Python 3.10/3.11/3.12 (182 tests each), Docker API build/health, production-mode Compose acceptance, and disposable nftables plus iptables containment integration. The new historical audit and PDF tests and loopback TCP queue outage/reconnect tests are included in this run. This evidence does not represent physical client-network drills, independent off-host restore, or client retention approval.
+
+
+## Owner pilot candidate update (2026-11-10)
+
+The controlled owner pilot package is documented in [CLIENT_PILOT_VALIDATION.md](CLIENT_PILOT_VALIDATION.md). It covers a fresh branch clone, Android Termux/Ubuntu setup, loopback-only standalone startup, synthetic workflow, historical PDF review and evidence capture. The README explicitly labels this branch **TEST CANDIDATE — NOT CLIENT-READY / NOT APPROVED FOR PRODUCTION**.
+
+The pilot scripts were hardened so they do not print an agent credential, do not place the administrator API key in curl command-line arguments, and return a failing exit code when any service health check fails. Regression guards are in `tests/test_pilot_scripts_security.py`.
+
+Exact candidate head `8a086ab36ecb13467372621f8e51e2ffdd5c1786` passed all six jobs in [GitHub Actions run 42916599803](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42916599803):
+- Python 3.10, 3.11 and 3.12: **185 tests passed on each version**.
+- Docker API image build and health smoke passed.
+- Production-mode Compose acceptance passed.
+- Disposable nftables and iptables containment integration passed.
+- Shell entrypoint validation and application compilation passed.
+
+This is CI evidence for the owner test candidate, not field certification. The R4 exit criteria for physical offline queue/reconnect, physical multi-agent lifecycle, independently administered signed-checkpoint transfer and clean-instance restore, and client-signed retention approval remain unchecked. **R4 remains IN PROGRESS; do not merge this PR or unlock R5.**
