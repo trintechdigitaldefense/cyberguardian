@@ -93,10 +93,51 @@ if ! wait_http "dashboard" "http://127.0.0.1:3000/health" 20; then
   exit 1
 fi
 
-echo "Starting Agent..."
-(cd "$ROOT" && nohup env CYBERGUARDIAN_API=http://127.0.0.1:8080 CG_CONTROLLER_URL=http://127.0.0.1:8080 \
-  CYBERGUARDIAN_API_KEY="${CG_AGENT_KEY:-$CYBERGUARDIAN_API_KEY}" \
-  python3 -u agents/linux-ebpf/agent.py --interval 60 > /tmp/cg-agent.log 2>&1 &)
+STRICT_AGENT_MODE=0
+case "${CG_PRODUCTION:-}" in 1|true|TRUE|yes|YES) STRICT_AGENT_MODE=1 ;; esac
+case "${CG_REQUIRE_AGENT_IDENTITY:-}" in 1|true|TRUE|yes|YES) STRICT_AGENT_MODE=1 ;; esac
+if [ "$STRICT_AGENT_MODE" = "0" ] && [ -f "$ROOT/data/credentials.json" ]; then
+  if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("require_agent_identity") else 1)' "$ROOT/data/credentials.json" 2>/dev/null; then
+    STRICT_AGENT_MODE=1
+  fi
+fi
+
+if [ "${CG_DISABLE_LOCAL_AGENT:-0}" = "1" ]; then
+  echo "Local agent auto-start disabled (CG_DISABLE_LOCAL_AGENT=1)."
+elif [ "$STRICT_AGENT_MODE" = "1" ]; then
+  AGENT_ENV_FILE="${CG_AGENT_ENV_FILE:-}"
+  if [ -z "$AGENT_ENV_FILE" ]; then
+    echo "Production identity enforcement is enabled; skipping bootstrap agent."
+    echo "Enroll this device and set CG_AGENT_ENV_FILE to its protected agent environment file."
+  else
+    case "$AGENT_ENV_FILE" in /*) ;; *) AGENT_ENV_FILE="$ROOT/$AGENT_ENV_FILE" ;; esac
+    if [ ! -f "$AGENT_ENV_FILE" ]; then
+      echo "WARNING: enrolled agent environment file not found; local agent was not started."
+    elif ! python3 -c 'import os,stat,sys; s=os.stat(sys.argv[1]); sys.exit(0 if stat.S_ISREG(s.st_mode) and not (stat.S_IMODE(s.st_mode) & 0o077) else 1)' "$AGENT_ENV_FILE"; then
+      echo "WARNING: agent environment file must be a regular file with no group/other permissions (0400 or 0600); local agent was not started."
+    else
+      echo "Starting enrolled local agent..."
+      (
+        set -a
+        . "$AGENT_ENV_FILE"
+        set +a
+        : "${CYBERGUARDIAN_ASSET_ID:?missing CYBERGUARDIAN_ASSET_ID}"
+        : "${CYBERGUARDIAN_TENANT:?missing CYBERGUARDIAN_TENANT}"
+        : "${CYBERGUARDIAN_API_KEY:?missing per-agent CYBERGUARDIAN_API_KEY}"
+        : "${CG_AGENT_IDENTITY_SECRET:?missing CG_AGENT_IDENTITY_SECRET}"
+        : "${CG_COMMAND_SIGNING_SECRET:?missing CG_COMMAND_SIGNING_SECRET}"
+        export CG_REQUIRE_AGENT_IDENTITY=1 CG_REQUIRE_COMMAND_SIG=1
+        export CYBERGUARDIAN_API=http://127.0.0.1:8080 CG_CONTROLLER_URL=http://127.0.0.1:8080
+        exec nohup python3 -u agents/linux-ebpf/agent.py --interval 60
+      ) > /tmp/cg-agent.log 2>&1 &
+    fi
+  fi
+else
+  echo "Starting local development agent (bootstrap credentials; non-production only)..."
+  (cd "$ROOT" && nohup env CYBERGUARDIAN_API=http://127.0.0.1:8080 CG_CONTROLLER_URL=http://127.0.0.1:8080 \
+    CYBERGUARDIAN_API_KEY="${CG_AGENT_KEY:-$CYBERGUARDIAN_API_KEY}" \
+    python3 -u agents/linux-ebpf/agent.py --interval 60 > /tmp/cg-agent.log 2>&1 &)
+fi
 
 echo ""
 echo "============================================"
