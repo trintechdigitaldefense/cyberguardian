@@ -43,7 +43,7 @@ _fim_ready = False
 SUSPICIOUS = {"mimikatz", "powershell -enc", "nc.exe", "ncat", "meterpreter", "cobaltstrike"}
 
 
-def cg_api_post(path: str, payload: dict, timeout: int = 10):
+def cg_api_post(path: str, payload: dict, timeout: int = 10, *, queue_on_failure: bool = True):
     url = API.rstrip("/") + path
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": KEY, "X-Tenant-ID": TENANT}, method="POST")
@@ -55,6 +55,9 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10):
             except Exception:
                 return True, {"raw": body}
     except Exception as e:
+        if not queue_on_failure:
+            print(f"[agent] POST {path} failed; it will be retried with fresh state on the next heartbeat: {e}")
+            return False, {}
         try:
             queued = queue.enqueue("POST", path, payload)
             print(f"[agent] POST {path} failed — queued ({queued} pending): {e}")
@@ -112,7 +115,7 @@ def register():
         "asset_id": ASSET, "hostname": hostname, "asset_type": "endpoint", "os": os_info,
         "tags": tags, "agent_version": VERSION, "tenant_id": TENANT,
         "machine_id": mid, "fingerprint": fp, "identity_ts": ts, "identity_sig": sig,
-    })
+    }, queue_on_failure=False)
     print("[agent] registered →", data.get("status") if isinstance(data, dict) else data)
     return ok
 
@@ -235,6 +238,16 @@ def net_scan():
         print(f"[agent] netwatch error: {e}")
 
 
+def _deliver_queued_record(path: str, payload: dict):
+    # Registrations double as heartbeats and contain a short-lived HMAC
+    # timestamp. Old queued registrations expire; a fresh heartbeat is sent
+    # every scan, so acknowledge legacy queued copies instead of retrying them
+    # forever after reconnect.
+    if path == "/v1/assets/register":
+        return True, {"status": "superseded_by_fresh_heartbeat"}
+    return cg_api_post(path, payload)
+
+
 def scan_once():
     global scan_count, baseline_names
     poll_and_execute_commands()
@@ -265,7 +278,7 @@ def scan_once():
                     "tenant_id": TENANT,
                 })
     scan_count += 1
-    queue.flush(lambda path, payload: cg_api_post(path, payload)[0:2])
+    queue.flush(_deliver_queued_record)
     print("[agent] scan complete")
 
 
