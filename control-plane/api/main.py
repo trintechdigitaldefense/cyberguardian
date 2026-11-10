@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 
 from agent_credentials import active_agent_api_keys, find_agent_by_api_key, get_agent_credential
 from command_signing import sign_envelope
+from audit_ledger import append_event as _append_audit_ledger_event
 
 _ROOT = Path(__file__).resolve().parent
 _FULL = _ROOT / "main_full.py"
@@ -76,6 +77,10 @@ from service_auth import dashboard_scope_allows, nad_scope_allows
 _logger = logging.getLogger("cyberguardian.operator_audit")
 _original_write_audit = _mod.write_audit
 _original_is_admin = _mod.is_admin
+_AUDIT_LEDGER_PATH = Path(
+    os.environ.get("CG_AUDIT_LEDGER_PATH")
+    or (Path(os.environ.get("CG_DATA_DIR", str(_ROOT.parents[1] / "data"))) / "audit_ledger.jsonl")
+)
 
 
 def _is_admin_with_operator(key: str):
@@ -106,7 +111,15 @@ def _write_audit_with_operator(*args, **kwargs):
             "request_id": claims["request_id"],
         }, sort_keys=True, separators=(",", ":"))
         kwargs["detail"] = (detail + " | " + context).strip(" |")
-    return _original_write_audit(*args, **kwargs)
+    result = _original_write_audit(*args, **kwargs)
+    # The independent ledger is appended after the transactional gateway
+    # audit write. If the chain cannot be extended, propagate the failure so
+    # callers that require an audit record can fail closed.
+    _append_audit_ledger_event(
+        _AUDIT_LEDGER_PATH,
+        {"args": list(args), "fields": kwargs},
+    )
+    return result
 
 
 _mod.write_audit = _write_audit_with_operator
