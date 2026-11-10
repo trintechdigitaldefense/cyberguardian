@@ -153,3 +153,49 @@ def test_restore_signed_checkpoint_is_atomic_and_requires_explicit_overwrite(tmp
 
     replacement = ledger.restore_signed_checkpoint(snapshot, restored, key, overwrite=True)
     assert replacement["head"] == result["head"]
+
+
+
+def test_audit_ledger_handles_short_writes_without_corrupting_chain(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    original_write = audit_ledger.os.write
+    calls = {"count": 0}
+
+    def short_write(fd, data):
+        if calls["count"] == 0:
+            calls["count"] += 1
+            return original_write(fd, data[:7])
+        return original_write(fd, data)
+
+    monkeypatch.setattr(audit_ledger.os, "write", short_write)
+    audit_ledger.append_event(path, {"action": "short-write-test"})
+    assert audit_ledger.verify_ledger(path)["valid"] is True
+
+
+def test_audit_ledger_partial_write_fails_closed_on_next_append(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    original_write = audit_ledger.os.write
+    calls = {"count": 0}
+
+    def partial_then_fail(fd, data):
+        if calls["count"] == 0:
+            calls["count"] += 1
+            return original_write(fd, data[:9])
+        raise OSError("simulated crash during audit append")
+
+    monkeypatch.setattr(audit_ledger.os, "write", partial_then_fail)
+    try:
+        audit_ledger.append_event(path, {"action": "partial-write"})
+    except OSError as exc:
+        assert "simulated crash" in str(exc)
+    else:
+        raise AssertionError("partial write fault must propagate")
+
+    monkeypatch.setattr(audit_ledger.os, "write", original_write)
+    assert audit_ledger.verify_ledger(path)["valid"] is False
+    try:
+        audit_ledger.append_event(path, {"action": "must-not-append-after-corruption"})
+    except audit_ledger.LedgerIntegrityError:
+        pass
+    else:
+        raise AssertionError("append must fail closed after a partial ledger record")
