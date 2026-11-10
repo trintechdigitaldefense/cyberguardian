@@ -241,7 +241,7 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
             "This does not prove that no security risks exist.",
             styles["CGBody"],
         ))
-    story += [Paragraph("Recent activity", styles["CGSection"])]
+    story += [Paragraph("Historical activity" if report_period is not None else "Recent activity", styles["CGSection"])]
     if audit:
         event_counts: dict[str, int] = {}
         for entry in audit:
