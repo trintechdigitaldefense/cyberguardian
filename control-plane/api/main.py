@@ -368,6 +368,10 @@ async def _agent_event_idempotency(request: Request, call_next):
             )
             """
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cg_agent_idempotency_created_at "
+            "ON cg_agent_idempotency(created_at)"
+        )
         existing = connection.execute(
             """
             SELECT status_code, content_type, response_body
