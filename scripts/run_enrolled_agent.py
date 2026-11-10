@@ -28,7 +28,7 @@ SAFE_AGENT_ENV_KEYS = {
 }
 
 
-def read_asset_id_from_env_file(path: str) -> tuple[str, Optional[str]]:
+def read_agent_environment_file(path: str) -> dict[str, str]:
     env_file = Path(path).expanduser()
     if env_file.is_symlink() or not env_file.is_file():
         raise PermissionError("agent environment file must be a regular, non-symlink file")
@@ -36,21 +36,30 @@ def read_asset_id_from_env_file(path: str) -> tuple[str, Optional[str]]:
         raise PermissionError("agent environment file must be private (0600)")
     if env_file.parent.is_symlink() or stat.S_IMODE(env_file.parent.stat().st_mode) & 0o077:
         raise PermissionError("agent environment directory must be private (0700)")
+    allowed = {
+        "CYBERGUARDIAN_API", "CYBERGUARDIAN_ASSET_ID", "CYBERGUARDIAN_TENANT",
+        "CYBERGUARDIAN_API_KEY", "CG_AGENT_IDENTITY_SECRET",
+        "CG_COMMAND_SIGNING_SECRET", "CG_REQUIRE_AGENT_IDENTITY", "CG_REQUIRE_COMMAND_SIG",
+    }
     selected: dict[str, str] = {}
     for line in env_file.read_text(encoding="utf-8").splitlines():
         name, separator, value = line.partition("=")
-        if not separator or name not in {"CYBERGUARDIAN_ASSET_ID", "CYBERGUARDIAN_API"}:
+        if not separator or name not in allowed:
             continue
         if name in selected:
             raise ValueError(f"agent environment file repeats {name}")
         parts = shlex.split(value, comments=True, posix=True)
         if parts:
             selected[name] = parts[0]
-    asset_id = selected.get("CYBERGUARDIAN_ASSET_ID", "").strip()
-    if not asset_id:
-        raise ValueError("agent environment file is missing CYBERGUARDIAN_ASSET_ID")
-    return asset_id, selected.get("CYBERGUARDIAN_API")
-
+    required = (
+        "CYBERGUARDIAN_ASSET_ID", "CYBERGUARDIAN_TENANT", "CYBERGUARDIAN_API_KEY",
+        "CG_AGENT_IDENTITY_SECRET", "CG_COMMAND_SIGNING_SECRET",
+    )
+    if any(not selected.get(name, "").strip() for name in required):
+        raise ValueError("agent environment file is missing required per-device credentials")
+    if selected.get("CG_REQUIRE_AGENT_IDENTITY") != "1" or selected.get("CG_REQUIRE_COMMAND_SIG") != "1":
+        raise ValueError("agent environment file must require identity and command signatures")
+    return selected
 
 def _validate_api_url(value: str) -> str:
     parsed = urlparse(str(value or "").strip())
@@ -74,13 +83,16 @@ def build_agent_environment(
     *,
     base_env: Optional[Mapping[str, str]] = None,
     api_url: Optional[str] = None,
+    credential_record: Optional[Mapping[str, str]] = None,
 ) -> dict[str, str]:
     asset_id = str(asset_id or "").strip()
     if not asset_id:
         raise ValueError("asset ID is required")
-    record = agent_credentials.get_agent_credential(asset_id)
+    record = dict(credential_record) if credential_record is not None else agent_credentials.get_agent_credential(asset_id)
     if not isinstance(record, dict):
         raise PermissionError("agent is not enrolled or its credentials have been revoked")
+    if credential_record is not None and str(record.get("status") or "active") != "active":
+        raise PermissionError("agent environment file enrollment is not active")
 
     tenant_id = str(record.get("tenant_id") or "").strip()
     api_key = str(record.get("api_key") or "").strip()
@@ -125,10 +137,24 @@ def main() -> int:
         parser.error("--interval must be at least 5 seconds")
     try:
         asset_id = args.asset_id
-        file_api = None
+        file_values = None
         if args.env_file:
-            asset_id, file_api = read_asset_id_from_env_file(args.env_file)
-        env = build_agent_environment(asset_id, api_url=args.api or file_api)
+            file_values = read_agent_environment_file(args.env_file)
+            asset_id = file_values["CYBERGUARDIAN_ASSET_ID"]
+            file_record = {
+                "tenant_id": file_values["CYBERGUARDIAN_TENANT"],
+                "api_key": file_values["CYBERGUARDIAN_API_KEY"],
+                "identity_secret": file_values["CG_AGENT_IDENTITY_SECRET"],
+                "command_secret": file_values["CG_COMMAND_SIGNING_SECRET"],
+                "status": "active",
+            }
+            env = build_agent_environment(
+                asset_id,
+                api_url=args.api or file_values.get("CYBERGUARDIAN_API"),
+                credential_record=file_record,
+            )
+        else:
+            env = build_agent_environment(asset_id, api_url=args.api)
     except (PermissionError, ValueError, RuntimeError) as exc:
         parser.error(str(exc))
     if not AGENT_SCRIPT.is_file():
