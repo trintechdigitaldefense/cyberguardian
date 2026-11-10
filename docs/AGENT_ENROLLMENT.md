@@ -69,7 +69,7 @@ Set the controller URL and all values printed by the enrollment script:
 
 Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
 
-Registration is retried with a fresh timestamp on the next heartbeat rather than placed in the offline queue, because signed registration envelopes expire. Durable detections and command results continue to use the offline queue. HTTP 401/403 responses stop the agent without queueing rejected requests; rotate or re-enroll the device credentials before restarting it.
+Registration is retried with a fresh timestamp on the next heartbeat rather than placed in the offline queue, because signed registration envelopes expire. Durable detections and command results continue to use the offline queue. Each durable POST carries a deterministic SHA-256 event ID in `X-CG-Event-ID`; the gateway records the response in the same SQLite transaction as the route's database writes, so a retry after an ambiguous acknowledgement replays the original response instead of repeating the database side effect. Idempotency records are retained for 30 days with a 200,000-record fail-closed capacity limit. HTTP 401/403 responses stop the agent without queueing rejected requests; rotate or re-enroll the device credentials before restarting it.
 
 ### Running the enrolled agent on the controller device
 
