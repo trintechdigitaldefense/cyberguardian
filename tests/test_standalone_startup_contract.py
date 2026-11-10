@@ -36,4 +36,4 @@ def test_setup_credentials_generates_unique_service_identities_and_rotation():
         assert f'"{field}"' in source
     assert "CG_ROTATE_BOOTSTRAP_AGENT_KEY" in source
     assert "audit_checkpoint_key_hex" in source
-    assert "CG_AUDIT_CHECKPOINT_KEY_HEX" in source
+    assert "export_audit_checkpoint_key.py" in source
