@@ -37,6 +37,8 @@ async def validate_dashboard_credentials():
         secret = os.getenv("CG_OPERATOR_ASSERTION_SECRET", "")
         if len(API_KEY.encode("utf-8")) < 32 or len(secret.encode("utf-8")) < 32:
             raise RuntimeError("production dashboard service and assertion secrets must be at least 32 bytes")
+        if not COOKIE_SECURE:
+            raise RuntimeError("CG_COOKIE_SECURE must be enabled in production")
         try:
             _trusted_proxy_networks()
         except ValueError as exc:
