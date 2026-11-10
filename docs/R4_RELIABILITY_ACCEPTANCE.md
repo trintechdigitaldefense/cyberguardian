@@ -15,7 +15,7 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 | Issue memory | Locked atomic JSONL store, bounded active/archive retention, fail-closed malformed-record handling, tenant-bound fingerprints, verified request tenant context, object-level update authorization, tenant-only archive export and idempotent restore. | `tests/test_issue_memory.py` covers concurrent writers, archive capacity, tenant-separated findings, cross-tenant update denial, malformed/truncated input, private export permissions, overwrite/symlink refusal and idempotent restore. A formally approved retention schedule remains. |
 | Fleet lifecycle | Tenant-filtered fleet response projects stale last-seen agents to offline, unknown timestamps to unknown, and preserves revoked/disabled states; configurable `CG_AGENT_STALE_AFTER_SECONDS` | `tests/test_fleet_lifecycle.py` and tenant-scoped API-level assertions in `tests/test_service_auth_scopes.py`; [run 42871748997](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42871748997) passed the stale/offline projection and tenant isolation tests. Signed registration heartbeat/reconnect now verifies last_seen refresh without duplicate inventory rows; cross-tenant registration is rejected; revoked credentials are rejected and the enrollment CLI can re-enroll the same asset with fresh API, identity and command secrets. Tests: `tests/test_agent_api_integration.py`, `tests/test_agent_enrollment.py`. Longer-lived multi-agent Compose lifecycle transitions and a physical reconnect exercise remain. |
 | Client reports | Tenant-explicit weekly/scorecard fetch, mismatch/missing-source rejection, escaped PDF fields, tenant-bound PDF/CSV, atomic private output and formula-safe CSV cells. | `tests/test_weekly_client_report.py` covers tenant mismatch, missing tenant, generated PDF signature, output permissions and CSV injection. Live Compose authorization, source-record provenance and repeatable date-window evidence remain. |
-| End-to-end workflow | R1/R2/R3 provide signed agent delivery, human gate, containment and operator audit foundations; gateway now stores idempotency responses transactionally for agent detection and command-result endpoints. | Integration tests exercise signed registration/reconnect, tenant-bound command polling, signed command-result reporting, replay response caching, and credential revocation. A single live Compose test covering detect → decision → stage → operator approve/reject → signed delivery → safe execution → correlated audit → tenant report is still outstanding. |
+| End-to-end workflow | R1/R2/R3 provide signed agent delivery, human gate, containment and operator audit foundations; gateway stores idempotency responses transactionally for agent detection and command-result endpoints. | **Automated live Compose acceptance passed** on commit `71396125e4f629fe1950396b9978034c8c98c00e`, Actions run [42906028038](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42906028038). The six-job run covers high-severity detection, decision creation, two tenant-scoped staged actions, operator approval and rejection, signed command delivery, rejected-command non-delivery, safe non-disruptive execution, command-result replay, correlated audit lookup and tenant weekly-report retrieval. Disruptive isolation is deliberately not executed in the shared Compose stack; firewall execution remains isolated to the containment namespace job. Multi-agent field operation and independent audit/report provenance drills remain separate operational evidence. |
 
 ## Operational caveats
 
@@ -35,7 +35,7 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 - [ ] Tenant A cannot view, update, export or infer Tenant B's issues, audit, fleet, actions or reports.
 - [ ] Fleet enrollment, heartbeat, stale/offline transition, reconnect, revoke and re-enroll are covered end-to-end.
 - [ ] PDF/CSV reports are reproducible, tenant-scoped, permission-checked and traceable to source records/time window.
-- [ ] Supervised detect-to-report workflow passes with approval/rejection, signed delivery, safe execution, audit correlation and report verification.
+- [x] Supervised detect-to-report workflow passes in live Compose CI with approval/rejection, signed delivery, safe non-disruptive execution, command-result replay, audit correlation and tenant weekly-report retrieval (run 42906028038, commit `71396125e4f629fe1950396b9978034c8c98c00e`).
 - [ ] Operations docs cover backup/restore, queue overflow, audit verification/export, retention and incident recovery.
 
 **Release rule:** R4 is not complete until every exit criterion is evidenced. R5's real 600-second soak and supervised pilot remain locked until then.
@@ -101,3 +101,19 @@ Issue archival regression tests: `tests/test_issue_memory.py` verifies that acti
 
 
 A clean-instance restore helper is available as `scripts/restore_audit_checkpoint.py`. It verifies the HMAC manifest, snapshot digest, record count and chain before writing a separate destination atomically. It refuses an existing destination unless `--replace` is explicitly supplied. The test suite exercises the API and CLI restore paths; operational restore to an independently administered host is still required.
+
+
+## Live supervised Compose workflow acceptance (2026-11-10)
+
+The full six-job CI run [42906028038](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42906028038) passed on exact commit `71396125e4f629fe1950396b9978034c8c98c00e`.
+
+The Compose job starts the production-mode services with disposable credentials and an enrolled test agent, then verifies:
+
+1. Two distinct high-severity detections produce tenant-bound decisions and human-gated isolation actions.
+2. A request-bound operator assertion approves one action and rejects the other.
+3. The approved isolation command is delivered with a valid per-agent signature; the rejected command is not delivered.
+4. A separately queued `escalate` command is signed, delivered, and passed through the actual agent dispatcher as a non-disruptive action. The test does not execute the approved isolation command.
+5. The agent command-result event is accepted; an identical event replay returns the stored response and replay marker.
+6. The resulting command is correlated in the audit response and the tenant-scoped weekly report endpoint returns a non-empty report.
+
+Python 3.11 completed with 171 passing tests. Python 3.10, 3.12, Docker API smoke, Compose and disposable nftables/iptables containment integration also passed. This is automated integration evidence, not a substitute for a physical network-partition/reconnect exercise, independent off-host audit restore, approved retention schedule, multi-agent reconnect validation or Android/Termux testing. R4 remains in progress until those operational exit criteria are signed off; R5 remains locked.
