@@ -29,6 +29,13 @@ API_KEY = os.getenv("CG_DASHBOARD_API_KEY", "")
 app = FastAPI(title="CyberGuardian Dashboard", version="1.4.0-tier3")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
+@app.on_event("startup")
+async def validate_dashboard_credentials():
+    if dashboard_auth.PRODUCTION:
+        secret = os.getenv("CG_OPERATOR_ASSERTION_SECRET", "")
+        if len(API_KEY.encode("utf-8")) < 32 or len(secret.encode("utf-8")) < 32:
+            raise RuntimeError("production dashboard service and assertion secrets must be at least 32 bytes")
+
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
