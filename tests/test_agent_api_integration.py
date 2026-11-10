@@ -486,7 +486,7 @@ def test_detection_idempotency_replays_stored_response_without_rehandling(tmp_pa
     async def handle(_request):
         calls.append("handled")
         content = json.dumps({"accepted": True, "count": len(calls)})
-        return StreamingResponse(iter([content]), media_type="application/json")
+        return StreamingResponse(iter([content.encode("utf-8")]), media_type="application/json")
 
     first = asyncio.run(main._agent_event_idempotency(request(), handle))
     second = asyncio.run(main._agent_event_idempotency(request(), handle))
