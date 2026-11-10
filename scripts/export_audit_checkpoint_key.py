@@ -61,7 +61,7 @@ def main() -> int:
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="ascii") as handle:
-            handle.write(key_hex + "\\n")
+            handle.write(key_hex + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, output)
