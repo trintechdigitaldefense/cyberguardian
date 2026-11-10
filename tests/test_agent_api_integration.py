@@ -56,6 +56,38 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
 
     headers = {"X-API-Key": record["api_key"], "X-Tenant-ID": "tenant-a"}
     with TestClient(main.app) as client:
+        invalid_identity = client.post(
+            "/v1/assets/register",
+            headers=headers,
+            json={
+                "asset_id": "host-a",
+                "tenant_id": "tenant-a",
+                "hostname": "host-a",
+                "os": "linux-test",
+                "machine_id": "machine-a",
+                "fingerprint": fingerprint,
+                "identity_ts": identity_ts,
+                "identity_sig": "0" * 64,
+            },
+        )
+        assert invalid_identity.status_code == 403, invalid_identity.text
+
+        admin_key_registration = client.post(
+            "/v1/assets/register",
+            headers={"X-API-Key": "admin-key-" + "a" * 40, "X-Tenant-ID": "tenant-a"},
+            json={
+                "asset_id": "host-a",
+                "tenant_id": "tenant-a",
+                "hostname": "host-a",
+                "os": "linux-test",
+                "machine_id": "machine-a",
+                "fingerprint": fingerprint,
+                "identity_ts": identity_ts,
+                "identity_sig": identity_sig,
+            },
+        )
+        assert admin_key_registration.status_code == 403, admin_key_registration.text
+
         registered = client.post(
             "/v1/assets/register",
             headers=headers,
@@ -183,3 +215,36 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         agent_credentials.write_agent_credentials({"host-a": revoked_record})
         revoked_poll = client.get("/v1/agent/commands?asset_id=host-a", headers=headers)
         assert revoked_poll.status_code == 403
+
+        revoked_registration = client.post(
+            "/v1/assets/register",
+            headers=headers,
+            json={
+                "asset_id": "host-a",
+                "tenant_id": "tenant-a",
+                "hostname": "host-a",
+                "os": "linux-test",
+                "machine_id": "machine-a",
+                "fingerprint": fingerprint,
+                "identity_ts": time.time(),
+                "identity_sig": agent_identity.sign_registration(
+                    "host-a", fingerprint, time.time()
+                ),
+            },
+        )
+        assert revoked_registration.status_code == 403, revoked_registration.text
+
+        revoked_result = client.post(
+            "/v1/agent/command-result",
+            headers=headers,
+            json={
+                "command_id": command["id"],
+                "asset_id": "host-a",
+                "action": command["action"],
+                "target": command["target"],
+                "ok": True,
+                "detail": "must-not-be-accepted-after-revocation",
+                "result": {"test": True},
+            },
+        )
+        assert revoked_result.status_code == 403, revoked_result.text
