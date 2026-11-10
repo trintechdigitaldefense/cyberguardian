@@ -210,5 +210,7 @@ def test_legacy_issue_tenant_migration_updates_active_and_archive_atomically(tmp
     assert result["active_migrated"] == 1
     assert result["archived_migrated"] == 1
     assert result["unresolved"] == []
-    assert issue_memory.list_issues(tenant_id="tenant-b")[0]["id"] == active["id"]
-    assert issue_memory.list_archived_issues(tenant_id="tenant-a")[0]["id"] == archived["id"]
+    # The first-created tenant-b issue was evicted to the archive; the
+    # second tenant-a issue remains active after the bounded-store rotation.
+    assert issue_memory.list_issues(tenant_id="tenant-a")[0]["id"] == archived["id"]
+    assert issue_memory.list_archived_issues(tenant_id="tenant-b")[0]["id"] == active["id"]
