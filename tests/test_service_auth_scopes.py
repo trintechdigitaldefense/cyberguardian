@@ -75,10 +75,13 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     import main
     importlib.reload(main)
     schema = main.app.openapi()
-    print("REPORT_TENANT_PARAMS_DEBUG", {
-        path: [p.get("name") for p in schema.get("paths", {}).get(path, {}).get("get", {}).get("parameters", [])]
-        for path in ("/v1/reports/weekly", "/v1/inventory/report", "/v1/risk/summary", "/v1/pilot/scorecard")
-    })
+    for report_path in ("/v1/reports/weekly", "/v1/inventory/report", "/v1/risk/summary", "/v1/pilot/scorecard"):
+        operation = schema.get("paths", {}).get(report_path, {}).get("get")
+        assert operation is not None, f"dashboard report route missing from API schema: {report_path}"
+        parameter_names = {item.get("name") for item in operation.get("parameters", [])}
+        assert "tenant_id" in parameter_names, (
+            f"dashboard report route lacks tenant filter: {report_path} {parameter_names}"
+        )
     from operator_context import CURRENT_OPERATOR
     operator_token = CURRENT_OPERATOR.set({
         "sub": "operator-a", "role": "admin", "tenant_id": "tenant-a",
