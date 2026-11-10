@@ -55,8 +55,13 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10):
             except Exception:
                 return True, {"raw": body}
     except Exception as e:
-        queue.enqueue("POST", path, payload)
-        print(f"[agent] POST {path} failed — queued: {e}")
+        try:
+            queued = queue.enqueue("POST", path, payload)
+            print(f"[agent] POST {path} failed — queued ({queued} pending): {e}")
+        except Exception as queue_error:
+            # Preserve existing unacknowledged events on overflow; never silently
+            # evict old telemetry to make room for a newer record.
+            print(f"[agent] POST {path} failed and offline queue rejected the event: {queue_error}")
         return False, {}
 
 
