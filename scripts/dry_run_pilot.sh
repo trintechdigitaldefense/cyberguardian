@@ -6,6 +6,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export CG_DATA_DIR="${CG_DATA_DIR:-$ROOT/data}"
 API="${CG_API:-http://127.0.0.1:8080}"
+TENANT_ID="${CG_TENANT_ID:-default}"
+if [ -z "$TENANT_ID" ]; then
+  echo "CG_TENANT_ID must identify the tenant for this pilot." >&2
+  exit 1
+fi
+export CG_TENANT_ID="$TENANT_ID"
 
 echo "=== CyberGuardian Synthetic Dry-Run ==="
 python3 - <<'PY'
@@ -28,7 +34,11 @@ if not isinstance(key, str) or not key:
 
 def call(label, path, method="GET", payload=None):
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"X-API-Key": key, "Accept": "application/json"}
+    headers = {
+        "X-API-Key": key,
+        "X-Tenant-ID": os.environ.get("CG_TENANT_ID", "default"),
+        "Accept": "application/json",
+    }
     if body is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(api + path, data=body, headers=headers, method=method)
