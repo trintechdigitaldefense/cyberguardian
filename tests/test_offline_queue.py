@@ -391,6 +391,7 @@ def test_real_loopback_controller_outage_restart_and_reconnect(tmp_path):
 
 def test_two_agent_queues_reconnect_without_crossing_tenant_payloads(tmp_path):
     import json
+    import urllib.request
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
