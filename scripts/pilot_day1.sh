@@ -10,6 +10,7 @@ if [ -z "$TENANT_ID" ]; then
   exit 1
 fi
 export CG_TENANT_ID="$TENANT_ID"
+export CG_PILOT_RUN_ID="${CG_PILOT_RUN_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 
 echo "=============================================="
 echo " CyberGuardian R4 Owner Pilot Smoke Pack"
@@ -29,7 +30,7 @@ export CG_DISABLE_LOCAL_AGENT=1
 API="${CG_API:-http://127.0.0.1:8080}"
 
 echo "[2/5] Checking API health..."
-if ! curl -fsS --max-time 3 "$API/health" >/dev/null 2>&1; then
+if ! curl -fsS --max-time 3 -H "X-CG-Pilot-Run-ID: $CG_PILOT_RUN_ID" -H "X-Tenant-ID: $TENANT_ID" "$API/health" >/dev/null 2>&1; then
   echo "       API not running; starting hardened local services..."
   ./start.sh
 fi
@@ -60,13 +61,18 @@ request = urllib.request.Request(
     headers={
         "X-API-Key": key,
         "X-Tenant-ID": os.environ.get("CG_TENANT_ID", "default"),
+        "X-CG-Pilot-Run-ID": os.environ.get("CG_PILOT_RUN_ID", ""),
         "Accept": "application/json",
     },
 )
 try:
     with urllib.request.urlopen(request, timeout=8) as response:
         payload = response.read()
-        print(json.dumps(json.loads(payload), indent=2, sort_keys=True))
+        result = json.loads(payload)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        audit = next((item for item in result.get("checks", []) if item.get("id") == "audit_ready"), {})
+        if result.get("status") != "green" or audit.get("ok") is not True:
+            raise SystemExit("Pilot acceptance failed: scorecard is not green with verified audit evidence.")
 except urllib.error.HTTPError as exc:
     print(f"Scorecard request failed: HTTP {exc.code}", file=sys.stderr)
     raise SystemExit(1)
