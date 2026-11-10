@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import multiprocessing
+import threading
 import sys
 from pathlib import Path
 
@@ -108,3 +109,36 @@ def test_corrupt_records_are_retained_for_operator_inspection(tmp_path):
     assert result["failed"] == 1
     assert queue.size() == 1
     assert "_corrupt_line" in json.loads(queue.path.read_text().splitlines()[0])
+
+
+
+def test_enqueue_is_not_blocked_by_network_delivery(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/first", {"n": 1})
+    entered = threading.Event()
+    release = threading.Event()
+    flush_result = {}
+
+    def post_fn(path, payload):
+        entered.set()
+        assert release.wait(5)
+        return True, {}
+
+    flusher = threading.Thread(target=lambda: flush_result.update(queue.flush(post_fn, now=100)))
+    flusher.start()
+    assert entered.wait(5)
+
+    enqueue_result = {}
+    writer = threading.Thread(
+        target=lambda: enqueue_result.update({"size": queue.enqueue("POST", "/second", {"n": 2})})
+    )
+    writer.start()
+    writer.join(timeout=1)
+    assert not writer.is_alive(), "enqueue must not wait for an HTTP delivery callback"
+    release.set()
+    flusher.join(timeout=5)
+    writer.join(timeout=5)
+    assert not flusher.is_alive()
+    assert queue.size() == 1
+    remaining = json.loads(queue.path.read_text().splitlines()[0])
+    assert remaining["path"] == "/second"
