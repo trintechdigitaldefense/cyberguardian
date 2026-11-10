@@ -184,3 +184,30 @@ def test_valid_json_with_invalid_issue_schema_fails_closed(tmp_path, monkeypatch
         pass
     else:
         raise AssertionError("invalid issue schema must not be silently discarded")
+
+
+
+def test_legacy_issue_tenant_migration_updates_active_and_archive_atomically(tmp_path, monkeypatch):
+    store = tmp_path / "issues.jsonl"
+    archive = tmp_path / "issues-archive.jsonl"
+    monkeypatch.setattr(issue_memory, "STORE", store)
+    monkeypatch.setattr(issue_memory, "ARCHIVE", archive)
+    monkeypatch.setattr(issue_memory, "MAX_ISSUES", 1)
+
+    active = issue_memory.remember_issue("active finding", "asset-b", tenant_id="tenant-b")
+    archived = issue_memory.remember_issue("archived finding", "asset-a", tenant_id="tenant-a")
+
+    active_rows = [json.loads(line) for line in store.read_text(encoding="utf-8").splitlines()]
+    archive_rows = [json.loads(line) for line in archive.read_text(encoding="utf-8").splitlines()]
+    for row in active_rows + archive_rows:
+        row.pop("tenant_id", None)
+    store.write_text("".join(json.dumps(row) + "\n" for row in active_rows), encoding="utf-8")
+    archive.write_text("".join(json.dumps(row) + "\n" for row in archive_rows), encoding="utf-8")
+
+    mapping = {"asset-a": "tenant-a", "asset-b": "tenant-b"}
+    result = issue_memory.migrate_legacy_tenant_ids(mapping.get)
+    assert result["active_migrated"] == 1
+    assert result["archived_migrated"] == 1
+    assert result["unresolved"] == []
+    assert issue_memory.list_issues(tenant_id="tenant-b")[0]["id"] == active["id"]
+    assert issue_memory.list_archived_issues(tenant_id="tenant-a")[0]["id"] == archived["id"]
