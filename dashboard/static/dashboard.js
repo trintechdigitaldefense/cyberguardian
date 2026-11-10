@@ -1,5 +1,5 @@
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('visible'); setTimeout(()=>t.classList.remove('visible'),2500); }
-function esc(s){ return String(s??'').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>'); }
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;'); }
 async function setClientMode(on){
   const r=await cgFetch('/ops/client-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_mode:!!on})});
   const d=await r.json();
