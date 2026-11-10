@@ -948,3 +948,175 @@ async def _agent_scope_and_command_signing(request: Request, call_next):
         return JSONResponse({"detail": f"command signing failed: {exc}"}, status_code=500)
 
     return JSONResponse(result, status_code=response.status_code)
+
+# R4 owner-pilot audit evidence. These events are appended to the independent,
+# fsync-backed hash-chain ledger; the scorecard requires all four events from
+# the same pilot run before it can report audit readiness.
+_PILOT_AUDIT_EVENTS = {
+    ("GET", "/health"): "pilot_health_check",
+    ("POST", "/v1/client-mode"): "pilot_client_mode_on",
+    ("POST", "/v1/issues/remember"): "pilot_issue_created",
+}
+_PILOT_REQUIRED_AUDIT_EVENTS = {
+    "pilot_health_check",
+    "pilot_client_mode_on",
+    "pilot_issue_created",
+    "pilot_remediation_blocked",
+}
+
+
+def _pilot_audit_readiness(run_id: str) -> dict:
+    run_id = str(run_id or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", run_id):
+        return {"ok": False, "records": 0, "events": [], "detail": "pilot run ID is missing or invalid"}
+    ledger_path = Path(_AUDIT_LEDGER_PATH)
+    lock_fd = None
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = _audit_ledger._open_lock(
+            ledger_path.with_name(ledger_path.name + ".lock"), fcntl.LOCK_SH
+        )
+        integrity = _audit_ledger._verify_ledger_unlocked(ledger_path)
+        if not integrity.get("valid"):
+            return {
+                "ok": False, "records": int(integrity.get("records") or 0),
+                "events": [], "detail": "audit ledger integrity verification failed",
+            }
+        if int(integrity.get("records") or 0) <= 0 or not ledger_path.is_file():
+            return {"ok": False, "records": 0, "events": [], "detail": "audit ledger is empty"}
+        observed = set()
+        with ledger_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                record = json.loads(line)
+                envelope = record.get("event")
+                fields = envelope.get("fields") if isinstance(envelope, dict) else None
+                if not isinstance(fields, dict):
+                    continue
+                detail = str(fields.get("detail") or "")
+                if run_id in detail:
+                    event_name = str(fields.get("event") or "")
+                    if event_name in _PILOT_REQUIRED_AUDIT_EVENTS:
+                        observed.add(event_name)
+        missing = sorted(_PILOT_REQUIRED_AUDIT_EVENTS - observed)
+        return {
+            "ok": not missing,
+            "records": int(integrity["records"]),
+            "events": sorted(observed),
+            "detail": (
+                f"{len(observed)}/4 required pilot events verified; "
+                f"{integrity['records']} hash-chain records"
+                if not missing else
+                f"missing required pilot audit events: {', '.join(missing)}"
+            ),
+        }
+    except Exception:
+        _logger.exception("pilot audit readiness check failed")
+        return {"ok": False, "records": 0, "events": [], "detail": "audit ledger is unreadable or unavailable"}
+    finally:
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+
+@app.middleware("http")
+async def _r4_pilot_audit_evidence(request: Request, call_next):
+    response = await call_next(request)
+    method = request.method.upper()
+    path = request.url.path
+    run_id = str(request.headers.get("X-CG-Pilot-Run-ID") or "").strip()
+    monitored = (method, path) in _PILOT_AUDIT_EVENTS or (
+        method == "POST" and path == "/v1/issues/auto-remediate"
+    )
+    is_scorecard = method == "GET" and path == "/v1/pilot/scorecard"
+    if not monitored and not is_scorecard:
+        return response
+
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    raw_body = b"".join(chunks)
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        payload = {}
+
+    if monitored:
+        event_name = _PILOT_AUDIT_EVENTS.get((method, path), "pilot_remediation_attempt")
+        if method == "POST" and path == "/v1/client-mode":
+            if not isinstance(payload, dict) or payload.get("client_mode") is not True:
+                event_name = "pilot_client_mode_not_enabled"
+        elif method == "POST" and path == "/v1/issues/remember":
+            if response.status_code < 200 or response.status_code >= 300 or not isinstance(payload, dict) or payload.get("status") != "ok":
+                event_name = "pilot_issue_creation_failed"
+        elif method == "POST" and path == "/v1/issues/auto-remediate":
+            event_name = (
+                "pilot_remediation_blocked"
+                if isinstance(payload, dict) and payload.get("status") == "blocked"
+                else "pilot_remediation_not_blocked"
+            )
+        tenant_id = str(
+            request.headers.get("X-Tenant-ID")
+            or getattr(request.state, "tenant_id", "")
+            or os.environ.get("CG_TENANT_ID", "default")
+        )
+        evidence = {
+            "pilot_run_id": run_id,
+            "tenant_id": tenant_id,
+            "http_status": int(response.status_code),
+            "result_status": str(payload.get("status") or "") if isinstance(payload, dict) else "",
+        }
+        try:
+            _mod.write_audit(
+                event=event_name,
+                action=method,
+                target=path,
+                actor="r4-owner-pilot",
+                detail=json.dumps(evidence, sort_keys=True, separators=(",", ":")),
+                result_ok=1 if 200 <= response.status_code < 300 else 0,
+            )
+        except Exception:
+            _logger.exception("R4 pilot action could not be durably audited")
+            return JSONResponse(
+                {"detail": "pilot action audit write failed; audit readiness is not established"},
+                status_code=503,
+            )
+
+    if is_scorecard and isinstance(payload, dict):
+        audit = _pilot_audit_readiness(run_id)
+        checks = payload.get("checks")
+        if not isinstance(checks, list):
+            checks = []
+        replacement = {
+            "id": "audit_ready",
+            "label": "Audit trail writing",
+            "ok": bool(audit["ok"]),
+            "detail": audit["detail"],
+        }
+        found = False
+        for index, check in enumerate(checks):
+            if isinstance(check, dict) and check.get("id") == "audit_ready":
+                checks[index] = replacement
+                found = True
+                break
+        if not found:
+            checks.append(replacement)
+        payload["checks"] = checks
+        passed = sum(1 for check in checks if isinstance(check, dict) and check.get("ok") is True)
+        payload["score"] = f"{passed}/{len(checks)}"
+        payload["status"] = "green" if checks and passed == len(checks) else "red"
+        payload["audit_evidence"] = {
+            "run_id": run_id,
+            "records": audit["records"],
+            "verified_events": audit["events"],
+        }
+        return JSONResponse(payload, status_code=response.status_code)
+    return Response(
+        content=raw_body,
+        status_code=response.status_code,
+        headers={
+            key: value for key, value in response.headers.items()
+            if key.lower() not in {"content-length", "content-type", "transfer-encoding"}
+        },
+        media_type=response.media_type,
+        background=getattr(response, "background", None),
+    )
