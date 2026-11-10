@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import asyncio
 import hashlib
 import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -283,3 +285,24 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             },
         )
         assert revoked_result.status_code == 403, revoked_result.text
+
+
+
+def test_gateway_middleware_propagates_verified_tenant_into_issue_memory(tmp_path, monkeypatch):
+    main = _load_gateway()
+    monkeypatch.setattr(main._issue_memory, "STORE", tmp_path / "issues.jsonl")
+    monkeypatch.setattr(main._issue_memory, "ARCHIVE", tmp_path / "issues-archive.jsonl")
+    request = SimpleNamespace(
+        state=SimpleNamespace(tenant_id="tenant-a"),
+        headers={},
+    )
+
+    async def create_issue(_request):
+        return main._issue_memory.remember_issue(
+            "middleware tenant test", "asset-a"
+        )
+
+    result = asyncio.run(main._issue_memory_tenant_scope(request, create_issue))
+    assert result["tenant_id"] == "tenant-a"
+    assert main._issue_memory.list_issues(tenant_id="tenant-a")[0]["id"] == result["id"]
+    assert main._issue_memory.list_issues(tenant_id="tenant-b") == []
