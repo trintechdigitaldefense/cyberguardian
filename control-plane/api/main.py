@@ -297,6 +297,19 @@ _AGENT_IDEMPOTENCY_MAX_RECORDS = 200000
 
 
 @app.middleware("http")
+async def _issue_memory_tenant_scope(request: Request, call_next):
+    tenant_id = (
+        getattr(request.state, "tenant_id", None)
+        or request.headers.get("X-Tenant-ID")
+    )
+    token = _issue_memory.set_current_tenant(tenant_id)
+    try:
+        return await call_next(request)
+    finally:
+        _issue_memory.reset_current_tenant(token)
+
+
+@app.middleware("http")
 async def _agent_event_idempotency(request: Request, call_next):
     if request.method.upper() != "POST" or request.url.path not in _AGENT_IDEMPOTENCY_PATHS:
         return await call_next(request)
@@ -455,11 +468,13 @@ async def _verify_dashboard_operator(request: Request, call_next):
     if not is_agent and nad_key and hmac.compare_digest(api_key, nad_key):
         if not nad_scope_allows(request.method, request.url.path):
             return JSONResponse({"detail": "NAD service is not authorized for this endpoint"}, status_code=403)
+        request.state.tenant_id = str(request.headers.get("X-Tenant-ID") or "default")
         return await call_next(request)
     if not is_agent and dashboard_key and hmac.compare_digest(api_key, dashboard_key) and request.url.path != "/health":
         if not dashboard_scope_allows(request.method, request.url.path):
             return JSONResponse({"detail": "dashboard service is not authorized for this endpoint"}, status_code=403)
         if not _mod._agent_id.production_mode():
+            request.state.tenant_id = str(request.headers.get("X-Tenant-ID") or "default")
             return await call_next(request)
         secret = os.environ.get("CG_OPERATOR_ASSERTION_SECRET", "")
         if len(secret.encode("utf-8")) < 32:
@@ -527,6 +542,7 @@ async def _verify_dashboard_operator(request: Request, call_next):
         request.scope["query_string"] = urlencode(query_pairs).encode("ascii")
         request = Request(request.scope, replay_operator_body)
         request.state.operator_context = claims
+        request.state.tenant_id = claims["tenant_id"]
         context_token = _operator_context.CURRENT_OPERATOR.set(claims)
         try:
             # Persist an authorization record before a state-changing handler
@@ -654,6 +670,7 @@ async def _agent_scope_and_command_signing(request: Request, call_next):
         if not ok:
             return JSONResponse({"detail": f"agent authentication rejected: {reason}"}, status_code=403)
 
+    request.state.tenant_id = tenant_id
     response = await call_next(request)
 
     if path != "/v1/agent/commands" or response.status_code != 200:
