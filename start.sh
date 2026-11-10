@@ -42,8 +42,8 @@ read_credential() {
     "$CREDENTIALS_FILE" "$1" 2>/dev/null || true
 }
 
-if [ ! -f "$ROOT/data/credentials.json" ]; then
-  echo "WARNING: No data/credentials.json — run ./scripts/setup_credentials.sh"
+if [ ! -f "$CREDENTIALS_FILE" ]; then
+  echo "WARNING: No credentials file — run ./scripts/setup_credentials.sh"
 else
   if ! python3 - "$DATA_DIR" <<'PY'
 import json
@@ -68,7 +68,7 @@ except (OSError, UnicodeError, ValueError) as exc:
     raise SystemExit(f"invalid local credentials: {exc}")
 PY
   then
-    echo "ERROR: refusing to start with invalid or insecure data/credentials.json."
+    echo "ERROR: refusing to start with invalid or insecure credentials file."
     exit 1
   fi
 fi
@@ -78,7 +78,7 @@ CG_DASHBOARD_API_KEY="${CG_DASHBOARD_API_KEY:-}"
 CG_NAD_API_KEY="${CG_NAD_API_KEY:-}"
 CG_OPERATOR_ASSERTION_SECRET="${CG_OPERATOR_ASSERTION_SECRET:-}"
 DECISION_SERVICE_API_KEY="${DECISION_SERVICE_API_KEY:-}"
-if [ -f "$ROOT/data/credentials.json" ]; then
+if [ -f "$CREDENTIALS_FILE" ]; then
   CYBERGUARDIAN_API_KEY="${CYBERGUARDIAN_API_KEY:-$(read_credential api_key)}"
   CG_AGENT_KEY="${CG_AGENT_KEY:-$(read_credential agent_api_key)}"
   CG_DASHBOARD_API_KEY="${CG_DASHBOARD_API_KEY:-$(read_credential dashboard_api_key)}"
@@ -92,8 +92,8 @@ export CG_OPERATOR_ASSERTION_SECRET DECISION_SERVICE_API_KEY
 STRICT_AGENT_MODE=0
 case "${CG_PRODUCTION:-}" in 1|true|TRUE|yes|YES|on|ON) STRICT_AGENT_MODE=1 ;; esac
 case "${CG_REQUIRE_AGENT_IDENTITY:-}" in 1|true|TRUE|yes|YES|on|ON) STRICT_AGENT_MODE=1 ;; esac
-if [ "$STRICT_AGENT_MODE" = "0" ] && [ -f "$ROOT/data/credentials.json" ]; then
-  if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("require_agent_identity") else 1)' "$ROOT/data/credentials.json" 2>/dev/null; then
+if [ "$STRICT_AGENT_MODE" = "0" ] && [ -f "$CREDENTIALS_FILE" ]; then
+  if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("require_agent_identity") else 1)' "$CREDENTIALS_FILE" 2>/dev/null; then
     STRICT_AGENT_MODE=1
   fi
 fi
