@@ -71,7 +71,7 @@ SSH tunnel if remote: `ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 user@ho
 
 ## Hardened Docker Compose deployment
 
-Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash, administrator and lab-bootstrap keys, and distinct dashboard, NAD, operator-assertion and decision-service secrets into the ignored `data/credentials.json` file. Copy the generated service values into a private `deploy/docker/.env` file:
+Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash, administrator and lab-bootstrap keys, and distinct dashboard, NAD, operator-assertion and decision-service secrets plus a separate HMAC audit-checkpoint key into the ignored `data/credentials.json` file. Copy the generated service values into a private `deploy/docker/.env` file:
 
 ```bash
 CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
