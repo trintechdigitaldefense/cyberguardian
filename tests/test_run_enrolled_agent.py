@@ -60,3 +60,14 @@ def test_enrolled_agent_launcher_refuses_incomplete_credentials(monkeypatch):
         assert "incomplete" in str(exc)
     else:
         raise AssertionError("incomplete enrollment must not launch")
+
+
+
+def test_enrolled_agent_launcher_requires_https_for_remote_controller():
+    try:
+        launcher._validate_api_url("http://192.0.2.10:8080")
+    except ValueError as exc:
+        assert "must use HTTPS" in str(exc)
+    else:
+        raise AssertionError("remote HTTP controller URLs must be rejected")
+    assert launcher._validate_api_url("https://controller.example.com") == "https://controller.example.com"
