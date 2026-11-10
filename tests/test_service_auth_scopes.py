@@ -115,6 +115,11 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             headers={**dashboard_headers, "X-CG-Operator-Assertion": query_override},
         )
         assert denied_query_override.status_code == 403
+        duplicate_query_override = client.get(
+            "/v1/fleet?tenant_id=tenant-b&tenant_id=tenant-a",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": query_override},
+        )
+        assert duplicate_query_override.status_code == 403
 
         body_override = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
