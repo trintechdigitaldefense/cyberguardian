@@ -66,3 +66,27 @@ def test_report_cli_requires_tenant_before_network_access(monkeypatch):
         assert exc.code == 2
     else:
         raise AssertionError("report generation without tenant must fail closed")
+
+
+
+def test_csv_export_is_atomic_tenant_scoped_and_formula_safe(tmp_path):
+    output = tmp_path / "reports" / "weekly.csv"
+    reports.build_csv(
+        {
+            "status": "pilot",
+            "score": 90,
+            "checks": [
+                {"label": "=HYPERLINK(\\\"https://evil.invalid\\\")", "ok": True, "detail": "@SUM(A1:A2)"},
+            ],
+        },
+        output,
+        tenant_id="client-a",
+    )
+    import csv
+    with output.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert rows[0]["tenant_id"] == "client-a"
+    assert rows[0]["check_label"].startswith("'=")
+    assert rows[0]["detail"].startswith("'@")
+    assert output.stat().st_mode & 0o777 == 0o600
