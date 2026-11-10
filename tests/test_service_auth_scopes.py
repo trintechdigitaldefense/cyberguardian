@@ -105,6 +105,24 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
         )
         assert authorized.status_code == 200, authorized.text
 
+        audit_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="GET", path="/v1/audit",
+            request_id="integration-audit-read",
+        )
+        audit_response = client.get(
+            "/v1/audit?limit=40",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": audit_assertion},
+        )
+        assert audit_response.status_code == 200, audit_response.text
+        audit_items = audit_response.json().get("items", [])
+        assert any(
+            item.get("actor") == "operator-a"
+            and "actor_role" in str(item.get("detail", ""))
+            and "tenant_id" in str(item.get("detail", ""))
+            for item in audit_items
+        ), audit_response.text
+
         query_override = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
             tenant_id="tenant-a", method="GET", path="/v1/fleet",
