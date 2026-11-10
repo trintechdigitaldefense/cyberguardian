@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hmac
 import json
 import logging
 import os
@@ -47,8 +48,20 @@ app = _mod.app
 # Dashboard operator assertions are verified at the gateway boundary. Agent
 # credentials are handled by the existing asset-scoped middleware below.
 import operator_context as _operator_context
+from service_auth import dashboard_scope_allows, nad_scope_allows
 _logger = logging.getLogger("cyberguardian.operator_audit")
 _original_write_audit = _mod.write_audit
+_original_is_admin = _mod.is_admin
+
+
+def _is_admin_with_operator():
+    claims = _operator_context.CURRENT_OPERATOR.get()
+    if claims and claims.get("role") in {"admin", "operator"}:
+        return True
+    return _original_is_admin()
+
+
+_mod.is_admin = _is_admin_with_operator
 
 
 def _write_audit_with_operator(*args, **kwargs):
@@ -71,9 +84,16 @@ _mod.write_audit = _write_audit_with_operator
 @app.middleware("http")
 async def _verify_dashboard_operator(request: Request, call_next):
     api_key = str(request.headers.get("X-API-Key") or "")
-    dashboard_key = str(os.environ.get("CYBERGUARDIAN_API_KEY") or "")
+    dashboard_key = str(os.environ.get("CG_DASHBOARD_API_KEY") or "")
+    nad_key = str(os.environ.get("CG_NAD_API_KEY") or "")
     is_agent = bool(api_key and find_agent_by_api_key(api_key))
-    if not is_agent and dashboard_key and api_key == dashboard_key and request.url.path != "/health":
+    if not is_agent and nad_key and hmac.compare_digest(api_key, nad_key):
+        if not nad_scope_allows(request.method, request.url.path):
+            return JSONResponse({"detail": "NAD service is not authorized for this endpoint"}, status_code=403)
+        return await call_next(request)
+    if not is_agent and dashboard_key and hmac.compare_digest(api_key, dashboard_key) and request.url.path != "/health":
+        if not dashboard_scope_allows(request.method, request.url.path):
+            return JSONResponse({"detail": "dashboard service is not authorized for this endpoint"}, status_code=403)
         if not _mod._agent_id.production_mode():
             return await call_next(request)
         secret = os.environ.get("CG_OPERATOR_ASSERTION_SECRET", "")
@@ -136,7 +156,13 @@ _original_valid_keys = _mod.valid_keys
 
 
 def _valid_keys() -> set[str]:
-    return set(_original_valid_keys()) | active_agent_api_keys()
+    service_keys = {
+        value for value in (
+            os.environ.get("CG_DASHBOARD_API_KEY", "").strip(),
+            os.environ.get("CG_NAD_API_KEY", "").strip(),
+        ) if value
+    }
+    return set(_original_valid_keys()) | service_keys | active_agent_api_keys()
 
 
 _mod.valid_keys = _valid_keys
@@ -153,6 +179,9 @@ async def _agent_scope_and_command_signing(request: Request, call_next):
     }
     api_key = str(request.headers.get("X-API-Key") or "")
     agent_match = find_agent_by_api_key(api_key) if api_key else None
+    nad_key = str(os.environ.get("CG_NAD_API_KEY") or "")
+    if nad_key and hmac.compare_digest(api_key, nad_key) and nad_scope_allows(request.method, path):
+        return await call_next(request)
 
     # Agent credentials are deliberately limited to the agent's own endpoints.
     # They must never become general-purpose API keys for fleet/admin reads.
