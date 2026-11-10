@@ -44,7 +44,12 @@ Keep `.env`, `data/credentials.json`, and the dashboard SQLite database out of G
 
 ## Audit checkpoint and recovery
 
-Credential setup provisions a separate 256-bit HMAC checkpoint key as `audit_checkpoint_key_hex`. The audit export, verify and restore commands read it from `data/credentials.json` (or the configured `CG_DATA_DIR`) unless `CG_AUDIT_CHECKPOINT_KEY_HEX` is explicitly supplied. Copy the key into an independent secrets manager or offline recovery store; the controller's local credential file must not be its only copy.
+Credential setup provisions a separate 256-bit HMAC checkpoint key as `audit_checkpoint_key_hex` without printing the secret. The audit export, verify and restore commands read it from `data/credentials.json` (or the configured `CG_DATA_DIR`) unless `CG_AUDIT_CHECKPOINT_KEY_HEX` is explicitly supplied. Export a protected copy to an independent recovery store; the controller's local credential file must not be its only copy:
+
+```bash
+install -d -m 700 /secure/offhost/cyberguardian-secrets
+python3 scripts/export_audit_checkpoint_key.py --out /secure/offhost/cyberguardian-secrets/audit-checkpoint.key
+```
 
 Create a verified signed checkpoint on an independently mounted destination:
 
@@ -61,7 +66,7 @@ python3 scripts/verify_audit_checkpoint.py --snapshot /secure/offhost/cyberguard
 Perform a recovery drill on a clean, isolated controller using the independently stored checkpoint key:
 
 ```bash
-CG_AUDIT_CHECKPOINT_KEY_HEX="<original-checkpoint-key>" python3 scripts/restore_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl --destination /var/lib/cyberguardian/audit_ledger.jsonl
+CG_AUDIT_CHECKPOINT_KEY_HEX="$(cat /secure/offhost/cyberguardian-secrets/audit-checkpoint.key)" python3 scripts/restore_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl --destination /var/lib/cyberguardian/audit_ledger.jsonl
 ```
 
 Record the source commit, checkpoint timestamp, verification output, restore output and independent storage location in the pilot evidence pack. A local checkpoint alone is not an off-host backup or a completed restore drill.
