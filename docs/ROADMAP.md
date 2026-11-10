@@ -19,7 +19,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
-- R2-R5 remain open. The product is not production-ready; dashboard/service authentication, containment, queue reliability, audit/reporting and supervised pilot acceptance still need completion.
+- R0-R3 engineering gates are complete on the security branch. R4 reliability/audit/reporting integration and R5 isolated 600-second soak plus supervised pilot acceptance remain open. The product is not yet client-ready.
 
 ## Original eight phases
 
@@ -85,34 +85,22 @@ R2 Linux acceptance is complete. The CI integration job runs the harness in disp
 
 Remaining environment-specific validation is part of R5: repeat the supervised checks on the actual supported Android/Termux-Ubuntu device/kernel profile, document pidfd/kernel availability, and confirm the device's firewall backend and privileges. Do not run destructive tests on a client or production host.
 
-### R3 — Complete operator and service security (IN PROGRESS)
+### R3 — Complete operator and service security (COMPLETED)
 
-**R3 acceptance:** [run 42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed all six jobs, including the production-mode Compose stack. Tests cover signed dashboard acceptance, missing assertion rejection, NAD cross-scope denial, dashboard-to-agent denial, role-bound admin elevation, fleet/audit tenant filtering, cross-tenant rollback/approval object-ID rejection, trusted proxy selection, CSP, login-attempt retention, and operator onboarding. Full Compose acceptance exercises login, CSRF, secure cookies/HSTS, dashboard proxy/audit, logout, workload credential isolation, NAD detection scope and decision-service authentication.
+**Latest full CI evidence:** [run 42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed all six jobs on commit `1565851b4675591ef226b6d61078b332a6aead90`: Python 3.10/3.11/3.12, Docker API build/container smoke, disposable containment integration, and production-mode Docker Compose acceptance. The CI suite includes the operator provisioning CLI and tests.
 
-Implemented and covered so far:
-- Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
-- Persistent SQLite sessions store only token hashes and support expiry and revocation.
-- Login CSRF token, state-changing POST logout, CSRF header validation, and login throttling across IP and account scopes.
-- Dashboard route role checks and tenant context propagation to gateway requests.
-- Secure/HttpOnly/SameSite cookies when production cookie mode is enabled; response security headers and no-store policy.
-- Decision-service rejects missing/incorrect internal service keys on /v1 routes and fails closed in production when the key is unset.
-- Gateway patch adds the internal decision-service credential to decision/execute requests and replaces wildcard credentialed CORS with configured explicit origins.
-- Compose keeps decision service on the private Docker network, binds API/dashboard host ports to localhost, and requires deployment secrets. A safe .env.example and deployment guidance are committed.
-- R3 tests now cover login/session/CSRF/role flows, service-key rejection, fail-closed configuration, CORS patch behaviour and source-drift failures.
+Implemented and validated:
+1. **Operator identity:** dashboard backend mints HMAC-SHA256 request-bound assertions only from persistent server-side sessions. Gateway verifies signature, 60-second freshness, 5-second future skew, nonce replay, method/path and tenant. Verified subject/role/tenant/request ID are bound to gateway audit writes.
+2. **Audit attribution:** verified operator context is propagated to existing audit events; operator request start/completion records are written, and verified authorization denials are attributed. Tests verify subject, role and tenant details persist.
+3. **Service least privilege:** administrator, dashboard, NAD, decision-service and operator-assertion secrets are separate, independently generated, 32+ byte and production-validated. Dashboard and NAD containers do not receive the administrator credential.
+4. **Default-deny scopes:** dashboard service is limited to the explicit dashboard route/method allowlist and requires a valid operator assertion in production. NAD is limited to `POST /v1/detections`. Agent credentials remain per-asset/per-tenant. Decision service rejects missing or invalid internal credentials.
+5. **Tenant isolation:** authenticated tenant is propagated into gateway query filters; mismatched query/body tenant overrides are rejected; fleet, gate, audit, feedback and issue list responses are filtered; rollback, approval/rejection and benign-feedback object IDs are checked against tenant ownership. Cross-tenant denials are audited. Reporting endpoints expose tenant filters in their API schema.
+6. **Dashboard security:** login/session persistence, PBKDF2 password hashes, CSRF on mutations/logout, role enforcement, Secure/HttpOnly/SameSite cookies, strict CSP without `unsafe-inline`, external assets, output escaping, HSTS with secure-cookie mode, trusted-proxy-aware client IP extraction and bounded login-attempt retention.
+7. **Production configuration:** API rejects missing, weak or reused secrets and admin-key/credential-store mismatch. Dashboard and NAD validate their own workload credentials. Compose keeps decision service internal and binds host API/dashboard ports to loopback.
+8. **Operator onboarding and operations:** `scripts/manage_dashboard_user.py` provisions tenant-scoped admin/operator/analyst/viewer accounts using interactive passwords and PBKDF2 hashes. [R3 production operations](R3_PRODUCTION_OPERATIONS.md) documents independent secrets, rotation, TLS proxy setup, onboarding, backup and restore.
+9. **Full Compose acceptance:** production-mode Compose CI builds/starts API, dashboard, decision service and NAD; exercises login, invalid CSRF, secure cookies/HSTS, dashboard proxy calls, audit attribution, client-mode authorization, logout/session revocation, workload credential separation, NAD detection scope and decision-service authentication.
 
-Operator identity and service authorization design plus implementation progress: [docs/R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md](R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md). The first signed-assertion implementation slice is now pushed; full implementation and acceptance are not complete.
-
-Still required before R3 can be marked complete:
-1. Complete and validate signed operator identity assertions. Initial code now mints assertions from the dashboard's server-side session, verifies HMAC/freshness/nonce/method/path/tenant at the gateway in production, and adds verified subject/role/tenant/request ID to gateway audit writes. Automated tests cover signature tampering, expiry, replay, request binding, weak secrets and dashboard signing. Remaining: full Compose validation of audit persistence and approval/command correlation, cross-tenant object-ID substitution tests, and complete route-by-route audit coverage.
-2. Complete runtime acceptance for least privilege. Separate admin, dashboard, NAD and decision-service secrets are now defined; the dashboard and NAD have default-deny method/path scopes and the dashboard/NAD containers no longer receive the admin key. Unit tests prove scope allow/deny decisions. Remaining: full Compose service-to-service negative tests, cross-tenant object-ID substitution, and approval/command audit correlation. Production-mode gateway integration tests now prove dashboard assertion acceptance and NAD/dashboard scope denials.
-3. Audit every dashboard route and frontend action: ensure every state-changing operation requires CSRF and correct role, and every API proxy call carries the authenticated tenant. Add cross-tenant isolation tests, including object-ID substitution and audit/report endpoints.
-4. Review login throttling against reverse-proxy deployments. Trust forwarded client IP only from configured trusted proxies; add a global/account-only throttle resilient to rotating source IPs and a bounded cleanup/retention strategy for the attempts table.
-5. Harden browser policy: remove inline event handlers/scripts/styles where practical and remove `unsafe-inline` from CSP; test cookie Secure behaviour behind the documented TLS reverse proxy and confirm HSTS is only emitted for HTTPS deployments.
-6. Add production startup validation for missing/weak credentials, placeholder values, invalid CORS origins, insecure cookie settings, shared/default secrets and writable persistent storage. Do not silently fall back to development credentials in production.
-7. Add a full Compose integration test: fresh environment, all services healthy, dashboard login, invalid/expired/revoked session, CSRF denial, tenant-scoped API request, decision-service auth, and service-to-service failure when the secret is wrong.
-8. Confirm documentation accurately describes credential migration, secret generation, reverse-proxy/TLS requirements, backup/restore of the session DB and operator onboarding. Never commit real .env or credentials.
-
-Do not call R3 complete based on the current passing CI alone. The current evidence proves the listed automated tests and Docker API smoke, not full dashboard + decision-service deployment acceptance.
+R3 is accepted for the engineering roadmap. This is engineering/CI acceptance, not client-network certification. Keep the branch isolated from `main`; proceed to R4.
 
 ### R4 — Reliability, audit, and reporting integration
 
