@@ -212,7 +212,7 @@ jobs:
                         "severity": "medium", "confidence": 0.5, "title": "CI detection",
                         "description": "Non-destructive service-scope acceptance", "indicators": {}, "tags": []},
               )
-              assert detection.status_code not in {401, 403}, detection.text
+              assert 200 <= detection.status_code < 300, detection.text
               no_decision_key = client.get("http://decision-service:8001/v1/protection")
               assert no_decision_key.status_code == 401, no_decision_key.text
               decision_ok = client.get(
