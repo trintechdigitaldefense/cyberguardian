@@ -11,6 +11,7 @@ import hashlib
 import inspect
 import json
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -28,6 +29,15 @@ class QueueFullError(RuntimeError):
     """Raised when a new record cannot be accepted without losing queued data."""
 
 
+def _ensure_private_directory(directory: Path, *, harden_default: bool = False) -> None:
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if harden_default:
+        os.chmod(directory, 0o700)
+    if stat.S_IMODE(directory.stat().st_mode) & 0o077:
+        raise PermissionError(f"offline queue directory must be private (0700): {directory}")
+
+
 class OfflineQueue:
     def __init__(
         self,
@@ -43,11 +53,15 @@ class OfflineQueue:
         self.flush_lock_path = self.path.with_name(self.path.name + ".flush.lock")
         self.max_records = max(1, int(max_records))
         self.max_bytes = max(1024, int(max_bytes))
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            os.chmod(self.path.parent, 0o700)
-        except OSError:
-            pass
+        default_queue_dir = Path.home() / ".cyberguardian"
+        _ensure_private_directory(
+            self.path.parent,
+            harden_default=(self.path.parent == default_queue_dir),
+        )
+        _ensure_private_directory(
+            self.status_path.parent,
+            harden_default=(self.status_path.parent == default_queue_dir),
+        )
         for lock_path in (self.lock_path, self.flush_lock_path):
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
@@ -96,7 +110,7 @@ class OfflineQueue:
         return records
 
     def _atomic_write(self, records):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_private_directory(self.path.parent, harden_default=(self.path.parent == Path.home() / ".cyberguardian"))
         fd, temp_name = tempfile.mkstemp(prefix=self.path.name + ".", suffix=".tmp", dir=str(self.path.parent))
         try:
             os.fchmod(fd, 0o600)
@@ -122,11 +136,7 @@ class OfflineQueue:
                 pass
 
     def _write_status(self, mode: str, queued: int, **extra):
-        self.status_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            os.chmod(self.status_path.parent, 0o700)
-        except OSError:
-            pass
+        _ensure_private_directory(self.status_path.parent, harden_default=(self.status_path.parent == Path.home() / ".cyberguardian"))
         data = {"mode": mode, "queued": queued, "ts": time.time(), **extra}
         fd, temp_name = tempfile.mkstemp(prefix=self.status_path.name + ".", suffix=".tmp", dir=str(self.status_path.parent))
         try:
