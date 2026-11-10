@@ -31,7 +31,7 @@ def test_hash_chain_verifies_and_detects_tampering(tmp_path):
     record = json.loads(records[0])
     record["event"]["actor"] = "mallory"
     records[0] = json.dumps(record)
-    path.write_text("\\n".join(records) + "\\n")
+    path.write_text("\n".join(records) + "\n")
     result = ledger.verify_ledger(path)
     assert result["valid"] is False
     assert "hash mismatch" in result["error"]
@@ -39,7 +39,7 @@ def test_hash_chain_verifies_and_detects_tampering(tmp_path):
 
 def test_ledger_append_refuses_to_extend_corrupted_chain(tmp_path):
     path = tmp_path / "audit.jsonl"
-    path.write_text('{"broken":true}\\n')
+    path.write_text('{"broken":true}\n')
     try:
         ledger.append_event(path, {"event": "should-not-append"})
     except ledger.LedgerIntegrityError:
