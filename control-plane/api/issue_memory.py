@@ -1,37 +1,79 @@
-"""Persistent issue memory — disk JSONL, no fake events."""
+"""Crash-safe persistent issue memory — bounded JSONL, no synthetic events."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
+import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from runtime_paths import DATA_DIR
 from typing import Any, Dict, List, Optional
 
+from runtime_paths import DATA_DIR
+
 STORE = DATA_DIR / "issue_memory.jsonl"
+MAX_ISSUES = 2000
+
+
+@contextmanager
+def _store_lock():
+    STORE.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = STORE.with_name(STORE.name + ".lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def _read_all() -> List[Dict[str, Any]]:
     if not STORE.exists():
         return []
     out = []
-    for line in STORE.read_text(errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            continue
+    with open(STORE, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+                if isinstance(item, dict):
+                    out.append(item)
+            except (ValueError, TypeError):
+                # Do not silently rewrite away corrupt evidence. The caller
+                # sees valid records; verification tooling can flag the file.
+                continue
     return out
 
 
 def _write_all(items: List[Dict[str, Any]]) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STORE, "w") as f:
-        for it in items[-2000:]:
-            f.write(json.dumps(it, separators=(",", ":")) + "\n")
+    fd, temp_name = tempfile.mkstemp(prefix=STORE.name + ".", suffix=".tmp", dir=str(STORE.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for item in items[-MAX_ISSUES:]:
+                handle.write(json.dumps(item, separators=(",", ":"), sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, STORE)
+        os.chmod(STORE, 0o600)
+        dir_fd = os.open(str(STORE.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
 
 
 def fingerprint(title: str, asset_id: str, tags=None) -> str:
@@ -51,66 +93,65 @@ def remember_issue(
     detection_id: str = "",
     playbook_id: str = "",
 ) -> Dict[str, Any]:
-    tags = tags or []
-    fp = fingerprint(title, asset_id, tags)
-    items = _read_all()
-    now = time.time()
-    for it in items:
-        if it.get("fingerprint") == fp and it.get("status") in ("open", "watching", "staged"):
-            it["last_seen"] = now
-            it["seen_count"] = int(it.get("seen_count") or 1) + 1
-            it["severity"] = severity or it.get("severity")
-            if indicators:
-                it["indicators"] = indicators
-            if detection_id:
-                it["last_detection_id"] = detection_id
-            _write_all(items)
-            return it
-    rec = {
-        "id": str(uuid.uuid4()),
-        "fingerprint": fp,
-        "title": title,
-        "asset_id": asset_id,
-        "severity": severity,
-        "source": source,
-        "tags": tags,
-        "indicators": indicators or {},
-        "description": description,
-        "playbook_id": playbook_id or "",
-        "status": "open",
-        "seen_count": 1,
-        "first_seen": now,
-        "last_seen": now,
-        "last_detection_id": detection_id or "",
-        "auto_fix_eligible": bool(playbook_id)
-        or any(
-            t in (tags or [])
-            for t in ("credential_access", "ransomware", "malware", "c2", "suspicious_process")
-        ),
-        "notes": [],
-    }
-    items.append(rec)
-    _write_all(items)
-    return rec
+    with _store_lock():
+        tags = tags or []
+        fp = fingerprint(title, asset_id, tags)
+        items = _read_all()
+        now = time.time()
+        for item in items:
+            if item.get("fingerprint") == fp and item.get("status") in ("open", "watching", "staged"):
+                item["last_seen"] = now
+                item["seen_count"] = int(item.get("seen_count") or 1) + 1
+                item["severity"] = severity or item.get("severity")
+                if indicators:
+                    item["indicators"] = indicators
+                if detection_id:
+                    item["last_detection_id"] = detection_id
+                _write_all(items)
+                return item
+        record = {
+            "id": str(uuid.uuid4()),
+            "fingerprint": fp,
+            "title": title,
+            "asset_id": asset_id,
+            "severity": severity,
+            "source": source,
+            "tags": tags,
+            "indicators": indicators or {},
+            "description": description,
+            "playbook_id": playbook_id or "",
+            "status": "open",
+            "seen_count": 1,
+            "first_seen": now,
+            "last_seen": now,
+            "last_detection_id": detection_id or "",
+            "auto_fix_eligible": bool(playbook_id)
+            or any(t in tags for t in ("credential_access", "ransomware", "malware", "c2", "suspicious_process")),
+            "notes": [],
+        }
+        items.append(record)
+        _write_all(items)
+        return record
 
 
 def list_issues(status: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
     items = _read_all()
-    items.sort(key=lambda x: x.get("last_seen") or 0, reverse=True)
+    items.sort(key=lambda item: item.get("last_seen") or 0, reverse=True)
     if status:
-        items = [i for i in items if i.get("status") == status]
-    return items[:limit]
+        items = [item for item in items if item.get("status") == status]
+    return items[:max(0, min(int(limit), MAX_ISSUES))]
 
 
 def update_issue(issue_id: str, **fields) -> Optional[Dict[str, Any]]:
-    items = _read_all()
-    for it in items:
-        if it.get("id") == issue_id:
-            it.update({k: v for k, v in fields.items() if v is not None})
-            it["updated_at"] = time.time()
-            _write_all(items)
-            return it
-    return None
+    with _store_lock():
+        items = _read_all()
+        for item in items:
+            if item.get("id") == issue_id:
+                item.update({key: value for key, value in fields.items() if value is not None})
+                item["updated_at"] = time.time()
+                _write_all(items)
+                return item
+        return None
 
 
 def known_auto_actions(issue: Dict[str, Any]) -> List[Dict[str, str]]:
