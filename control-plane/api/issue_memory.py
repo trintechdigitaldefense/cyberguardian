@@ -232,7 +232,7 @@ def _write_archive_all(items: List[Dict[str, Any]]) -> None:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             for item in items:
-                handle.write(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\\n")
+                handle.write(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, archive)
