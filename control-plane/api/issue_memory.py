@@ -218,6 +218,82 @@ def fingerprint(title: str, asset_id: str, tags=None, tenant_id: str = "default"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _write_archive_all(items: List[Dict[str, Any]]) -> None:
+    archive = _archive_path()
+    archive.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temp_name = tempfile.mkstemp(prefix=archive.name + ".", suffix=".tmp", dir=str(archive.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for item in items:
+                handle.write(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, archive)
+        os.chmod(archive, 0o600)
+        dir_fd = os.open(str(archive.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+def migrate_legacy_tenant_ids(asset_tenant_lookup) -> Dict[str, Any]:
+    """Backfill tenant IDs for legacy active and archived issues using the asset registry."""
+    with _store_lock():
+        active = _read_all()
+        archive_path = _archive_path()
+        archived: List[Dict[str, Any]] = []
+        if archive_path.exists():
+            with open(archive_path, "r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except (ValueError, TypeError) as exc:
+                        raise IssueMemoryIntegrityError(
+                            f"invalid issue archive JSON at line {line_number}"
+                        ) from exc
+                    if not isinstance(item, dict) or not item.get("id"):
+                        raise IssueMemoryIntegrityError(
+                            f"invalid issue archive record at line {line_number}"
+                        )
+                    archived.append(item)
+
+        migrated_active = 0
+        migrated_archived = 0
+        unresolved: List[str] = []
+        for collection, counter in ((active, "active"), (archived, "archived")):
+            for item in collection:
+                if str(item.get("tenant_id") or "").strip():
+                    continue
+                asset_id = str(item.get("asset_id") or "").strip()
+                tenant = asset_tenant_lookup(asset_id) if asset_id else None
+                if tenant:
+                    item["tenant_id"] = str(tenant)
+                    if counter == "active":
+                        migrated_active += 1
+                    else:
+                        migrated_archived += 1
+                else:
+                    unresolved.append(str(item.get("id") or "unknown"))
+        if migrated_active:
+            _write_all(active)
+        if migrated_archived:
+            _write_archive_all(archived)
+        return {
+            "active_migrated": migrated_active,
+            "archived_migrated": migrated_archived,
+            "unresolved": unresolved,
+        }
+
+
 def remember_issue(
     title: str,
     asset_id: str,
