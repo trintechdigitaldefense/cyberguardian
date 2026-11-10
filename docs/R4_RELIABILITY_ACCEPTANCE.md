@@ -117,3 +117,12 @@ The Compose job starts the production-mode services with disposable credentials 
 6. The resulting command is correlated in the audit response and the tenant-scoped weekly report endpoint returns a non-empty report.
 
 Python 3.11 completed with 171 passing tests. Python 3.10, 3.12, Docker API smoke, Compose and disposable nftables/iptables containment integration also passed. This is automated integration evidence, not a substitute for a physical network-partition/reconnect exercise, independent off-host audit restore, approved retention schedule, multi-agent reconnect validation or Android/Termux testing. R4 remains in progress until those operational exit criteria are signed off; R5 remains locked.
+
+## Operational drill preparation (2026-11-10)
+
+Runbooks and an explicit client approval record are available on the `r4-operational-drill-runbooks` branch:
+
+- [R4 operational drill runbooks](R4_OPERATIONAL_DRILL_RUNBOOKS.md) define the offline partition/reconnect, independent audit backup and clean-instance restore, multi-agent physical reconnect, and report provenance/date-window procedures, including pass/fail criteria and required evidence.
+- [R4 client data-retention approval](R4_RETENTION_APPROVAL.md) is intentionally **NOT APPROVED** until the client data owner and authorized approver complete and sign it. No retention periods have been assumed.
+
+These documents prepare the operational acceptance work; they do not claim that a physical drill, independent off-host restore, or policy approval has occurred. R4 remains IN PROGRESS and R5 remains locked until dated evidence is reviewed and all exit criteria pass.
