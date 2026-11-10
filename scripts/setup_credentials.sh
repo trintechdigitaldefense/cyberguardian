@@ -2,20 +2,21 @@
 # First-run credential setup for CyberGuardian (writes data/credentials.json mode 600).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "$ROOT/data"
-chmod 700 "$ROOT/data"
+DATA_DIR="${CG_DATA_DIR:-$ROOT/data}"
+case "$DATA_DIR" in /*) ;; *) DATA_DIR="$ROOT/$DATA_DIR" ;; esac
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
 
-python3 - "$ROOT" << 'PY'
+python3 - "$DATA_DIR" << 'PY'
 import base64, hashlib, json, os, secrets, sys, getpass, tempfile
 from pathlib import Path
 
-root = Path(sys.argv[1])
+data = Path(sys.argv[1]).expanduser()
 # The heredoc supplies this script on stdin; read interactive answers from the controlling terminal.
 try:
     sys.stdin = open('/dev/tty', 'r', encoding='utf-8')
 except OSError:
     raise SystemExit('ERROR: credential setup requires an interactive terminal (/dev/tty). Run it directly in your terminal, not through a pipe or background job.')
-data = root / "data"
 data.mkdir(parents=True, exist_ok=True)
 path = data / "credentials.json"
 existing = {}
