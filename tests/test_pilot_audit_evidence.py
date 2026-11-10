@@ -86,6 +86,18 @@ def test_populated_valid_ledger_requires_all_events_for_same_pilot_run(tmp_path,
     assert set(result["events"]) == REQUIRED_EVENTS
 
 
+def test_unreadable_audit_ledger_fails_closed(tmp_path, monkeypatch):
+    main, data_dir, _ = _load_gateway(tmp_path, monkeypatch)
+
+    def unreadable(_path):
+        raise PermissionError("simulated audit storage denial")
+
+    monkeypatch.setattr(main._audit_ledger, "_verify_ledger_unlocked", unreadable)
+    result = main._pilot_audit_readiness(str(uuid.uuid4()))
+    assert result["ok"] is False
+    assert "unreadable" in result["detail"]
+
+
 def test_corrupted_audit_ledger_fails_closed(tmp_path, monkeypatch):
     main, data_dir, _ = _load_gateway(tmp_path, monkeypatch)
     main._AUDIT_LEDGER_PATH.write_text('{"corrupt":true}\\n', encoding="utf-8")
