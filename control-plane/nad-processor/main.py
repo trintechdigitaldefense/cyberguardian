@@ -12,9 +12,8 @@ PRODUCTION = os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "y
 
 @app.on_event("startup")
 async def validate_nad_credentials():
-    if os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}:
-        if len(API_KEY.encode("utf-8")) < 32:
-            raise RuntimeError("production NAD service credential must be at least 32 bytes")
+    if PRODUCTION and len(API_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("production NAD service credential must be at least 32 bytes")
 
 class SimulatedAnomaly(BaseModel):
     asset_id: str
