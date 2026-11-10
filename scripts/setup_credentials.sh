@@ -110,17 +110,14 @@ finally:
     if os.path.exists(temp_name):
         os.unlink(temp_name)
 
-print(f"Saved hashed credentials: {path}")
-print(f"Admin API key (save this): {api_key}")
-print(f"Agent API key (lab bootstrap only; save securely): {agent_key}")
+print(f"Saved credentials securely: {path}")
+print("Administrator, agent, service and audit-signing secrets were generated/stored.")
+print("Secret values are intentionally NOT printed. Do not copy credentials.json into chat, tickets or screenshots.")
 if rotate_agent_key:
     print("Legacy bootstrap agent key rotated because CG_ROTATE_BOOTSTRAP_AGENT_KEY was enabled.")
-print("Service credentials (save these for production deployment):")
-print(f"CG_DASHBOARD_API_KEY={service_credentials['dashboard_api_key']}")
-print(f"CG_NAD_API_KEY={service_credentials['nad_api_key']}")
-print(f"CG_OPERATOR_ASSERTION_SECRET={service_credentials['operator_assertion_secret']}")
-print(f"DECISION_SERVICE_API_KEY={service_credentials['decision_service_api_key']}")
-print("Audit checkpoint key generated and stored in the protected credentials file.")
+print("Standalone start.sh loads local service secrets directly from this protected file.")
+print("For Compose, provision secrets through an approved secret manager or protected deployment environment.")
+print("Audit checkpoint key is stored in the protected credentials file; export a protected recovery copy separately.")
 print("Use scripts/export_audit_checkpoint_key.py to place a protected copy in an independent recovery store.")
 print("Password is stored as a PBKDF2 hash, not plaintext.")
 print("Done. Keep keys secret. Never commit credentials.json.")

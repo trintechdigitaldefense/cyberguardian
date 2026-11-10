@@ -110,7 +110,62 @@ document.addEventListener('click', (event) => {
   else if (action === 'load-fleet') loadFleet();
   else if (action === 'load-weekly') loadWeekly();
   else if (action === 'load-inventory') loadInventory();
+  else if (action === 'download-client-report') downloadClientReport();
   else if (action === 'rollback') rollbackAsset(button.dataset.assetId);
   else if (action === 'gate') gateAct(button.dataset.id, button.dataset.verb);
   else if (action === 'mark-benign') markBenignFromGate(button.dataset.id, button.dataset.assetId, button.dataset.title);
 });
+
+function toLocalDateTimeValue(date){
+  const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
+  return local.toISOString().slice(0,16);
+}
+function initializeReportWindow(){
+  const start=document.getElementById('report-start');
+  const end=document.getElementById('report-end');
+  if(!start||!end) return;
+  const now=new Date();
+  end.value=toLocalDateTimeValue(now);
+  start.value=toLocalDateTimeValue(new Date(now.getTime()-7*24*60*60*1000));
+}
+initializeReportWindow();
+
+async function downloadClientReport(){
+  const status=document.getElementById('client-report-status');
+  const button=document.querySelector('[data-action="download-client-report"]');
+  if(button) button.disabled=true;
+  if(status) status.textContent='Collecting monitoring information and preparing the PDF…';
+  try{
+    const startValue=document.getElementById('report-start')?.value||'';
+    const endValue=document.getElementById('report-end')?.value||'';
+    const startDate=new Date(startValue);
+    const endDate=new Date(endValue);
+    if(!startValue||!endValue||Number.isNaN(startDate.getTime())||Number.isNaN(endDate.getTime())||endDate<=startDate){
+      throw new Error('Choose a valid reporting period. The end must be later than the start.');
+    }
+    const query=new URLSearchParams({start:startDate.toISOString(),end:endDate.toISOString()});
+    const response=await cgFetch('/ops/reports/client.pdf?'+query.toString());
+    if(!response.ok){
+      let message='Report generation failed (HTTP '+response.status+').';
+      try{ const body=await response.json(); if(body.error) message=body.error; }catch(_){}
+      throw new Error(message);
+    }
+    const blob=await response.blob();
+    if(blob.type!=='application/pdf') throw new Error('The server did not return a PDF file.');
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download='CyberGuardian_Client_Report_'+new Date().toISOString().slice(0,10).replaceAll('-','')+'.pdf';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    if(status) status.textContent='Report generated. Check your downloads.';
+    toast('Client PDF report generated');
+  }catch(error){
+    if(status) status.textContent=String(error.message||error);
+    toast('Client report could not be generated');
+  }finally{
+    if(button) button.disabled=false;
+  }
+}

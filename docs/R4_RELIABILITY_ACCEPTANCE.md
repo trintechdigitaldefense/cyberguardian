@@ -10,11 +10,11 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 
 | Area | Implementation now present | Evidence / remaining work |
 |---|---|---|
-| Offline queue | JSONL queue with advisory locking, atomic replace, fsync, owner-only files, record/byte caps, overflow rejection preserving older pending events, content dedupe, ack-only removal, exponential retry, bounded flush, corrupt-record retention. Queue callbacks pass the stable queue record ID to the controller. | `tests/test_offline_queue.py` covers atomic-replace/fsync fault injection, process restart, partial acknowledgement, concurrent enqueue/flush and stable record IDs. A real network-partition/reconnect drill and Android/Termux filesystem validation remain. |
+| Offline queue | JSONL queue with advisory locking, atomic replace, fsync, owner-only files, record/byte caps, overflow rejection preserving older pending events, content dedupe, ack-only removal, exponential retry, bounded flush, corrupt-record retention. Queue callbacks pass the stable queue record ID to the controller. | `tests/test_offline_queue.py` covers atomic-replace/fsync fault injection, process restart, partial acknowledgement, concurrent enqueue/flush, stable record IDs, a real loopback TCP controller outage/reconnect after queue restart, and two separate tenant-bound agent queues. CI run `42915576796` passed. A physical network partition/reconnect drill and Android/Termux filesystem validation remain. |
 | Audit durability | SQLite audit index plus append-only JSONL hash chain, serialized append, fsync, chain verification, fail-closed extension, signed HMAC checkpoint export/verify and atomic restore helper. | `tests/test_audit_ledger.py` and `tests/test_audit_checkpoint_cli.py` cover tampering, truncated/partial append, concurrent writers, signed checkpoint verification, wrong-key rejection and clean-path restore. A restore drill on a separately provisioned instance and independent off-host immutable storage remain. |
 | Issue memory | Locked atomic JSONL store, bounded active/archive retention, fail-closed malformed-record handling, tenant-bound fingerprints, verified request tenant context, object-level update authorization, tenant-only archive export and idempotent restore. | `tests/test_issue_memory.py` covers concurrent writers, archive capacity, tenant-separated findings, cross-tenant update denial, malformed/truncated input, private export permissions, overwrite/symlink refusal and idempotent restore. A formally approved retention schedule remains. |
-| Fleet lifecycle | Tenant-filtered fleet response projects stale last-seen agents to offline, unknown timestamps to unknown, and preserves revoked/disabled states; configurable `CG_AGENT_STALE_AFTER_SECONDS` | `tests/test_fleet_lifecycle.py` and tenant-scoped API-level assertions in `tests/test_service_auth_scopes.py`; [run 42871748997](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42871748997) passed the stale/offline projection and tenant isolation tests. Signed registration heartbeat/reconnect now verifies last_seen refresh without duplicate inventory rows; cross-tenant registration is rejected; revoked credentials are rejected and the enrollment CLI can re-enroll the same asset with fresh API, identity and command secrets. Tests: `tests/test_agent_api_integration.py`, `tests/test_agent_enrollment.py`. Longer-lived multi-agent Compose lifecycle transitions and a physical reconnect exercise remain. |
-| Client reports | Tenant-explicit weekly/scorecard fetch, mismatch/missing-source rejection, escaped PDF fields, tenant-bound PDF/CSV, atomic private output and formula-safe CSV cells. | `tests/test_weekly_client_report.py` covers tenant mismatch, missing tenant, generated PDF signature, output permissions and CSV injection. Live Compose authorization, source-record provenance and repeatable date-window evidence remain. |
+| Fleet lifecycle | Tenant-filtered fleet response projects stale last-seen agents to offline, unknown timestamps to unknown, and preserves revoked/disabled states; configurable `CG_AGENT_STALE_AFTER_SECONDS` | `tests/test_fleet_lifecycle.py`, `tests/test_service_auth_scopes.py`, `tests/test_agent_api_integration.py` and `tests/test_agent_enrollment.py` cover stale/offline projection, two separately credentialed agents in separate tenants, signed heartbeat/reconnect without duplicate inventory, per-agent command polling, cross-tenant denial, revocation and fresh-credential re-enrollment. Exact-head CI run `42915576796` passed. Physical multi-agent disconnect/reconnect and client-network lifecycle validation remain. |
+| Client reports | Historical audit query over the verified append-only ledger; request-bound operator and tenant scope; explicit UTC `[start, end)` window; 500-record pages pinned to one ledger head; source event IDs and record hashes; fail-closed on invalid chain, missing tenant, invalid window or unavailable source. PDF includes historical activity rows/provenance plus clearly-labelled current monitoring snapshot figures. | `tests/test_historical_audit_reporting.py` covers exact start/end boundaries, tenant isolation, stable pagination despite concurrent append, missing authentication, invalid windows, tenant override and corrupt-ledger denial. `tests/test_dashboard_client_reporting.py` covers period semantics, source IDs/hashes, duplicate/mismatched provenance and PDF content. Exact-head CI run `42915576796` passed all 182 tests on Python 3.10, 3.11 and 3.12. Client review with synthetic data and operational source-data verification remain separate. |
 | End-to-end workflow | R1/R2/R3 provide signed agent delivery, human gate, containment and operator audit foundations; gateway stores idempotency responses transactionally for agent detection and command-result endpoints. | **Automated live Compose acceptance passed** on commit `71396125e4f629fe1950396b9978034c8c98c00e`, Actions run [42906028038](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42906028038). The six-job run covers high-severity detection, decision creation, two tenant-scoped staged actions, operator approval and rejection, signed command delivery, rejected-command non-delivery, safe non-disruptive execution, command-result replay, correlated audit lookup and tenant weekly-report retrieval. Disruptive isolation is deliberately not executed in the shared Compose stack; firewall execution remains isolated to the containment namespace job. Multi-agent field operation and independent audit/report provenance drills remain separate operational evidence. |
 
 ## Operational caveats
@@ -27,16 +27,19 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 
 ## Exit criteria
 
-- [ ] Latest exact branch head, including the new audit export CLI, passes all six CI jobs on Python 3.10/3.11/3.12, Docker API, Compose and containment integration.
-- [ ] Queue restart/reconnect tests prove pending records survive process restart and only acknowledged events are removed.
-- [ ] Controller idempotency tests prove matching detection and command-result replays return the stored response, mismatched event digests fail closed, and the replay record is retained beyond ordinary retry windows.
-- [ ] Fault injection covers truncated/corrupt queue and issue-memory files; recovery preserves evidence and fails closed.
-- [ ] Audit chain survives gateway restart, detects tampering, and can be restored and verified from a consistent backup.
-- [ ] Tenant A cannot view, update, export or infer Tenant B's issues, audit, fleet, actions or reports.
-- [ ] Fleet enrollment, heartbeat, stale/offline transition, reconnect, revoke and re-enroll are covered end-to-end.
-- [ ] PDF/CSV reports are reproducible, tenant-scoped, permission-checked and traceable to source records/time window.
+- [x] Exact R4 candidate head `eee833045c5d4787d0740b273b9275e857776c46` passed all six CI jobs in [run 42915576796](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42915576796): 182 tests passed on Python 3.10/3.11/3.12, Docker API smoke, production Compose acceptance and nftables/iptables containment integration.
+- [x] Queue restart/reconnect tests prove pending records survive process restart and only acknowledged events are removed; loopback TCP outage/reconnect simulation passed.
+- [x] Controller idempotency tests prove matching detection and command-result replays return the stored response, mismatched event digests fail closed, and replay records are retained beyond ordinary retry windows.
+- [x] Fault injection covers truncated/corrupt queue and issue-memory files; recovery preserves evidence and fails closed.
+- [ ] Audit chain survives gateway restart, detects tampering, and can be restored and verified from a consistent backup on an independently administered clean instance.
+- [x] Tenant A cannot view, update, export or infer Tenant B's issues, audit, fleet, actions or reports in automated integration tests.
+- [x] Fleet enrollment, heartbeat, stale/offline transition, reconnect, revoke and re-enroll are covered end-to-end with two separately credentialed synthetic agents.
+- [x] Historical PDF reporting is reproducible, tenant-scoped, and traceable to source event IDs/hashes and a pinned audit-ledger checkpoint; exact date-window acceptance tests passed in run 42915576796.
 - [x] Supervised detect-to-report workflow passes in live Compose CI with approval/rejection, signed delivery, safe non-disruptive execution, command-result replay, audit correlation and tenant weekly-report retrieval (run 42906028038, commit `71396125e4f629fe1950396b9978034c8c98c00e`).
-- [ ] Operations docs cover backup/restore, queue overflow, audit verification/export, retention and incident recovery.
+- [x] Operations docs cover backup/restore, queue overflow, audit verification/export, retention approval and incident recovery.
+- [ ] Physical agent network partition/restart/reconnect drill and physical multi-agent disconnect/reconnect drill completed with evidence.
+- [ ] Signed checkpoint transferred to independently administered storage, verified there, restored on a separately provisioned clean instance, and extended with a new audit event.
+- [ ] Client data owner and authorized approver have signed the retention schedule in `docs/R4_RETENTION_APPROVAL.md`.
 
 **Release rule:** R4 is not complete until every exit criterion is evidenced. R5's real 600-second soak and supervised pilot remain locked until then.
 
@@ -117,3 +120,65 @@ The Compose job starts the production-mode services with disposable credentials 
 6. The resulting command is correlated in the audit response and the tenant-scoped weekly report endpoint returns a non-empty report.
 
 Python 3.11 completed with 171 passing tests. Python 3.10, 3.12, Docker API smoke, Compose and disposable nftables/iptables containment integration also passed. This is automated integration evidence, not a substitute for a physical network-partition/reconnect exercise, independent off-host audit restore, approved retention schedule, multi-agent reconnect validation or Android/Termux testing. R4 remains in progress until those operational exit criteria are signed off; R5 remains locked.
+
+## Operational drill preparation (2026-11-10)
+
+Runbooks and an explicit client approval record are available on the `r4-operational-drill-runbooks` branch:
+
+- [R4 operational drill runbooks](R4_OPERATIONAL_DRILL_RUNBOOKS.md) define the offline partition/reconnect, independent audit backup and clean-instance restore, multi-agent physical reconnect, and report provenance/date-window procedures, including pass/fail criteria and required evidence.
+- [R4 client data-retention approval](R4_RETENTION_APPROVAL.md) is intentionally **NOT APPROVED** until the client data owner and authorized approver complete and sign it. No retention periods have been assumed.
+
+These documents prepare the operational acceptance work; they do not claim that a physical drill, independent off-host restore, or policy approval has occurred. R4 remains IN PROGRESS and R5 remains locked until dated evidence is reviewed and all exit criteria pass.
+
+
+## Dashboard client PDF report centre (branch implementation; CI pending)
+
+The dashboard now includes a **Client PDF Reporting Centre** on the r4-operational-drill-runbooks branch. An authenticated operator can generate an on-demand PDF assembled from the current tenant-scoped monitoring summary, fleet view, approval queue, remembered issues, recent audit/activity records and the gateway's existing weekly digest. The report translates common security terms into everyday language, explains what alerts do and do not prove, shows the human-approval setting, and states source and coverage limitations.
+
+Implementation:
+- dashboard/client_reporting.py builds the PDF in memory; it does not write client report content to the dashboard filesystem.
+- GET /ops/reports/client.pdf requires an authenticated dashboard session and explicit tenant context. Each source request uses a request-bound operator assertion and tenant identity. If a source is unavailable or invalid, the endpoint fails closed and does not return a partial report.
+- The dashboard exposes a generate/download control; the response is marked no-store and served as a PDF attachment.
+- tests/test_dashboard_client_reporting.py covers PDF generation, glossary translation, tenant mismatch rejection and unknown metric handling.
+
+**Scope limitation:** this first version is a live snapshot plus the gateway's existing weekly digest. The audit/activity section is limited to the latest 100 records returned by the API. It does not yet provide arbitrary start/end date filters, a complete historical event export, scheduled delivery, or a formal client retention workflow. Do not describe it as exhaustive historical reporting. CI must pass on the exact PR head before treating the feature as accepted.
+
+
+
+## Historical client PDF reporting implementation candidate (2026-11-10)
+
+The R4 branch now implements the historical activity query rather than filtering the legacy latest-100 audit response.
+
+- `GET /v1/audit/history` reads the append-only hash-chained audit ledger under a shared ledger lock and verifies the complete chain before returning data.
+- The API requires request-bound dashboard operator authentication and a tenant context. Records are included only when the tenant is explicit in the operator audit context or can be resolved through the registered asset / pending-action ownership checks. Unattributable records are excluded; they are never assigned to a client by default.
+- Reporting timestamps must be timezone-aware ISO-8601 values. The API normalizes to UTC and applies the documented half-open interval **[start, end)**: start inclusive, end exclusive.
+- Pagination is limited to 500 rows per page and pins all pages to one verified ledger hash. Concurrent appends cannot shift the report's offsets. The dashboard fails closed if the snapshot changes, a page is missing, counts disagree, or more than 10,000 records are requested in one PDF.
+- Every historical row carries its audit event ID, timestamp, tenant ID and record hash. The PDF includes source record IDs and the checkpoint head so a client/operator can trace the activity.
+- The PDF explicitly distinguishes historical activity from current fleet/risk/gate snapshots and the existing weekly digest. It does not claim that the other snapshot metrics are historical time-series data.
+
+New acceptance tests:
+- `tests/test_historical_audit_reporting.py`: exact boundary inclusion/exclusion, cross-tenant exclusion, stable snapshot pagination, missing operator assertion, invalid/naive/reversed periods, tenant query override and corrupted ledger denial.
+- `tests/test_dashboard_client_reporting.py`: period metadata, source ID inclusion, duplicate ID rejection, cross-tenant record rejection, out-of-window rejection and source-count mismatch.
+
+**Status:** implementation and tests committed to the R4 candidate branch; the exact new head still requires the complete CI matrix. Do not check the historical reporting exit criterion until that CI run passes and a client-facing PDF has been reviewed with synthetic tenant data.
+
+
+## Exact-head automated acceptance evidence (2026-11-10)
+
+Candidate eee833045c5d4787d0740b273b9275e857776c46 passed GitHub Actions run [42915576796](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42915576796). All six jobs succeeded: Python 3.10/3.11/3.12 (182 tests each), Docker API build/health, production-mode Compose acceptance, and disposable nftables plus iptables containment integration. The new historical audit and PDF tests and loopback TCP queue outage/reconnect tests are included in this run. This evidence does not represent physical client-network drills, independent off-host restore, or client retention approval.
+
+
+## Owner pilot candidate update (2026-11-10)
+
+The controlled owner pilot package is documented in [CLIENT_PILOT_VALIDATION.md](CLIENT_PILOT_VALIDATION.md). It covers a fresh branch clone, Android Termux/Ubuntu setup, loopback-only standalone startup, synthetic workflow, historical PDF review and evidence capture. The README explicitly labels this branch **TEST CANDIDATE — NOT CLIENT-READY / NOT APPROVED FOR PRODUCTION**.
+
+The pilot scripts were hardened so they do not print an agent credential, do not place the administrator API key in curl command-line arguments, and return a failing exit code when any service health check fails. Regression guards are in `tests/test_pilot_scripts_security.py`.
+
+Exact candidate head `8a086ab36ecb13467372621f8e51e2ffdd5c1786` passed all six jobs in [GitHub Actions run 42916599803](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42916599803):
+- Python 3.10, 3.11 and 3.12: **185 tests passed on each version**.
+- Docker API image build and health smoke passed.
+- Production-mode Compose acceptance passed.
+- Disposable nftables and iptables containment integration passed.
+- Shell entrypoint validation and application compilation passed.
+
+This is CI evidence for the owner test candidate, not field certification. The R4 exit criteria for physical offline queue/reconnect, physical multi-agent lifecycle, independently administered signed-checkpoint transfer and clean-instance restore, and client-signed retention approval remain unchecked. **R4 remains IN PROGRESS; do not merge this PR or unlock R5.**

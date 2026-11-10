@@ -323,3 +323,126 @@ def test_queue_rejects_symlinked_lock_file(tmp_path):
     else:
         raise AssertionError("symlinked queue lock must be rejected")
     assert target.read_text(encoding="utf-8") == "do-not-touch"
+
+
+
+def test_real_loopback_controller_outage_restart_and_reconnect(tmp_path):
+    import socket
+    import threading
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            received.append(payload["event_id"])
+            body = json.dumps({"status": "accepted", "event_id": payload["event_id"]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *_args):
+            pass
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    endpoint = f"http://127.0.0.1:{port}"
+    queue = make_queue(tmp_path)
+    for number in range(3):
+        queue.enqueue("POST", "/v1/detections", {
+            "asset_id": "agent-a", "tenant_id": "tenant-a", "event_id": f"offline-{number}",
+        })
+
+    def post_fn(path, payload, record_id=None):
+        body = json.dumps(payload).encode()
+        request = urllib.request.Request(
+            endpoint + path, data=body,
+            headers={"Content-Type": "application/json", "X-CG-Queue-Record-ID": record_id or ""},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=1) as response:
+            return response.status == 200, json.loads(response.read().decode())
+
+    outage = queue.flush(post_fn, now=100)
+    assert outage == {"flushed": 0, "failed": 3, "remaining": 3, "deferred": 0}
+    assert queue.size() == 3
+
+    # Recreate the queue object as a restarted agent process would do.
+    restarted = make_queue(tmp_path)
+    assert restarted.size() == 3
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        reconnect = restarted.flush(post_fn, now=105)
+        assert reconnect == {"flushed": 3, "failed": 0, "remaining": 0, "deferred": 0}
+        assert restarted.size() == 0
+        assert sorted(received) == ["offline-0", "offline-1", "offline-2"]
+        assert restarted.get_status()["mode"] == "online"
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=3)
+
+
+def test_two_agent_queues_reconnect_without_crossing_tenant_payloads(tmp_path):
+    import json
+    import urllib.request
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            received.append((payload["tenant_id"], payload["asset_id"], payload["event_id"]))
+            body = b'{"status":"accepted"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        queues = {
+            "agent-a": make_queue(tmp_path / "agent-a"),
+            "agent-b": make_queue(tmp_path / "agent-b"),
+        }
+        for asset_id, tenant_id in (("agent-a", "tenant-a"), ("agent-b", "tenant-b")):
+            for number in range(2):
+                queues[asset_id].enqueue("POST", "/v1/detections", {
+                    "asset_id": asset_id, "tenant_id": tenant_id,
+                    "event_id": f"{asset_id}-{number}",
+                })
+
+        def deliver(path, payload, record_id=None):
+            body = json.dumps(payload).encode()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}" + path,
+                data=body, headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status == 200, json.loads(response.read().decode())
+
+        for queue in queues.values():
+            result = queue.flush(deliver, now=200)
+            assert result["flushed"] == 2
+            assert result["remaining"] == 0
+        assert len(received) == 4
+        assert {tenant for tenant, _, _ in received} == {"tenant-a", "tenant-b"}
+        assert {(tenant, asset) for tenant, asset, _ in received} == {
+            ("tenant-a", "agent-a"), ("tenant-b", "agent-b")
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=3)

@@ -69,8 +69,15 @@ The launcher reads the asset, tenant and per-device credentials from that protec
 For a local agent running on the controller device, use the registry-backed form instead:
 
 ```sh
-CG_AGENT_ASSET_ID=android-termux-controller CG_PRODUCTION=1 CG_REQUIRE_AGENT_IDENTITY=1 ./start.sh
+python3 scripts/enroll_agent.py --asset-id android-termux-controller --tenant-id customer-a
+export CG_HARDENED=1
+export CG_PRODUCTION=1
+export CG_REQUIRE_AGENT_IDENTITY=1
+export CG_AGENT_ASSET_ID=android-termux-controller
+./start.sh
 ```
+
+Hardened loopback mode does not disable an explicitly enrolled agent. It disables only the shared lab-bootstrap agent by default. `CG_DISABLE_LOCAL_AGENT=1` remains an explicit override that suppresses all local agent startup.
 
 Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
 
