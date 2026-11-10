@@ -115,7 +115,50 @@ jobs:
             docker compose -p "$PROJECT" logs --no-color
             exit 1
           fi
-          docker compose -p "$PROJECT" exec -T api python -c "import urllib.request; assert urllib.request.urlopen('http://decision-service:8001/health', timeout=5).status == 200; assert urllib.request.urlopen('http://nad-processor:8002/health', timeout=5).status == 200"
+          internal_ready=0
+          for _ in $(seq 1 30); do
+            if docker compose -p "$PROJECT" exec -T api python -c "import urllib.request; assert urllib.request.urlopen('http://decision-service:8001/health', timeout=5).status == 200; assert urllib.request.urlopen('http://nad-processor:8002/health', timeout=5).status == 200"; then
+              internal_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$internal_ready" != "1" ]; then
+            docker compose -p "$PROJECT" logs --no-color
+            exit 1
+          fi
+          docker compose -p "$PROJECT" exec -T dashboard python - <<'PY'
+          import re
+          from fastapi.testclient import TestClient
+          from main import app, CSRF_COOKIE
+          password = "Compose-CI-Integration-Password-2026!"
+          with TestClient(app, base_url="https://testserver", follow_redirects=False) as client:
+              page = client.get("/login")
+              assert page.status_code == 200
+              assert "unsafe-inline" not in page.headers.get("content-security-policy", "")
+              csrf_login = re.search(r'name="login_csrf" value="([^"]+)"', page.text).group(1)
+              bad_login = client.post("/login", data={
+                  "username": "compose-ci-admin", "password": password, "login_csrf": "invalid"
+              })
+              assert bad_login.status_code == 403
+              login = client.post("/login", data={
+                  "username": "compose-ci-admin", "password": password, "login_csrf": csrf_login
+              })
+              assert login.status_code == 303
+              csrf = client.cookies.get(CSRF_COOKIE)
+              assert client.get("/").status_code == 200
+              assert client.get("/ops/fleet").status_code == 200
+              assert client.get("/ops/audit").status_code == 200
+              mode = client.post("/ops/client-mode", json={"client_mode": True},
+                                 headers={"X-CSRF-Token": csrf})
+              assert mode.status_code == 200, mode.text
+              assert client.post("/ops/client-mode", json={"client_mode": False}).status_code == 403
+              audit = client.get("/ops/audit")
+              assert audit.status_code == 200
+              assert any(item.get("actor") == "compose-ci-admin" for item in audit.json().get("items", []))
+              assert client.post("/logout", headers={"X-CSRF-Token": csrf}).status_code == 303
+              assert client.get("/ops/fleet").status_code == 401
+          PY
           docker compose -p "$PROJECT" ps
   containment-integration:
     runs-on: ubuntu-latest
