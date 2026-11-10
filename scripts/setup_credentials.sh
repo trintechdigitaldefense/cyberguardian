@@ -10,6 +10,11 @@ import base64, hashlib, json, os, secrets, sys, getpass, tempfile
 from pathlib import Path
 
 root = Path(sys.argv[1])
+# The heredoc supplies this script on stdin; read interactive answers from the controlling terminal.
+try:
+    sys.stdin = open('/dev/tty', 'r', encoding='utf-8')
+except OSError:
+    raise SystemExit('ERROR: credential setup requires an interactive terminal (/dev/tty). Run it directly in your terminal, not through a pipe or background job.')
 data = root / "data"
 data.mkdir(parents=True, exist_ok=True)
 path = data / "credentials.json"
