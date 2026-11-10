@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest branch commit:** `28d0f0462d35e0465e9c8783c00cd520611ab071` (R3 operations guide formatting fix; latest code gates passed).  
-**Latest full CI:** [run 42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed on `1565851b4675591ef226b6d61078b332a6aead90`: Python 3.10/3.11/3.12, Docker API build/container smoke, containment integration, and production-mode Compose acceptance. The run includes the operator provisioning CLI and tests.  
+**Latest verified R4 queue commit:** `ae1126fdd0cd6cf3b303f1155b33709d9aef3118` (offline queue durability and retry fixes; all six CI jobs passed).  
+**Latest full CI:** [run 42869693720](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42869693720) passed all six jobs on `ae1126fdd0cd6cf3b303f1155b33709d9aef3118`: Python 3.10/3.11/3.12 (83 tests in Python 3.11), Docker API build/container smoke, disposable containment integration, and production-mode Compose acceptance.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
@@ -19,7 +19,7 @@ This roadmap preserves the original eight product phases and adds a release-read
 - Do not merge R2 into main yet. R0 and R1 code gates passed on commit `786b628`: Python 3.10/3.11/3.12, 12 automated tests, compilation, Docker build and container `/health` smoke all passed in Actions run [42511953408](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42511953408).
 - Core agent, containment, offline queue, identity, decision-service, dashboard, and startup/status/stop files are tracked on the R2 GitHub branch. Their presence does not mean their security acceptance tests are complete.
 - docs/TEN_MINUTE_TEST_REPORT.md records 16 checks passing in 7 seconds, not a ten-minute/600-second test. This is a short smoke-check report, not a completed ten-minute soak test.
-- R0-R3 engineering gates are complete on the security branch. R4 reliability/audit/reporting integration and R5 isolated 600-second soak plus supervised pilot acceptance remain open. The product is not yet client-ready.
+- R0-R3 engineering gates are complete on the security branch. R4 is in progress: the offline queue has been hardened and CI-tested, while durable audit/action-history, fleet lifecycle, reporting/export and end-to-end workflow acceptance remain. R5 isolated 600-second soak and supervised pilot acceptance remain open. The product is not yet client-ready.
 
 ## Original eight phases
 
@@ -118,9 +118,29 @@ R3 is accepted for the engineering roadmap. This is engineering/CI acceptance, n
 - No unresolved critical/high security findings; client scope, authorization, rollback, retention, and incident contacts are documented.
 - Pilot remains supervised; disruptive actions require explicit human approval by default.
 
+## R4 implementation progress (2026-11-10)
+
+**Latest verified R4 code commit:** `ae1126fdd0cd6cf3b303f1155b33709d9aef3118`  
+**CI evidence:** [run 42869693720](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42869693720) passed all six jobs on this exact commit.
+
+The first R4 engineering slice hardens `agents/linux-ebpf/offline_queue.py`:
+
+- Serializes writers with an advisory file lock, including concurrent agent processes.
+- Writes JSONL through a same-directory temporary file, fsyncs file contents, atomically replaces the queue, and fsyncs the parent directory.
+- Restricts queue, lock and status files to owner-only permissions where supported.
+- Enforces record and byte limits. On overflow, rejects the newest event and preserves all already-pending events; overflow is visible in connectivity status.
+- Deduplicates identical pending events by a stable content hash.
+- Removes a record only when the delivery callback acknowledges it; failed delivery retains the record with bounded exponential backoff.
+- Bounds each flush batch and retains malformed records for operator inspection rather than silently discarding them.
+- Agent POST handling now reports queue overflow explicitly instead of masking it or evicting older telemetry.
+
+New `tests/test_offline_queue.py` covers durability/permissions, deduplication, overflow preservation, acknowledgement-only deletion, retry timing, bounded flush, concurrent writers and corrupt-record retention. GitHub Actions run 42869693720 passed Python 3.10/3.11/3.12, Docker API, Compose and containment jobs. This verifies code-level queue behavior; it is not a physical power-loss or filesystem fault-injection test.
+
+**R4 remains in progress.** Next: durable/tamper-evident audit and action-history verification, tenant-safe issue persistence, fleet lifecycle/staleness tests, report provenance/export permissions, and the supervised detect-to-report integration workflow. Then perform a full restart/recovery and tenant-boundary matrix. R5 remains locked until R4 acceptance is complete.
+
 ## Immediate work order
 
-R0, R1 and R2 code gates are complete on the security branch. R3 now includes signed operator assertions, gateway verification/replay checks, audit-context propagation, separate dashboard/NAD workload keys and default-deny route scopes; the latest five-job CI run passed. Runtime production-mode authorization, complete audit/tenant coverage, proxy-aware throttling, CSP hardening and full Compose acceptance remain. Continue R3 before starting R4. Keep the security branch isolated from `main`.
+R0-R3 engineering gates are complete on the security branch. R4 reliability, audit, fleet and reporting integration is now active; the offline queue slice has passed its six-job CI pipeline. Continue R4 before R5. Keep the security branch isolated from `main`; do not merge or call the product client-ready until the complete R4/R5 gates pass.
 
 ## GitHub delivery rules
 
