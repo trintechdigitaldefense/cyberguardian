@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import hashlib
 import json
 import os
 import socket
@@ -44,10 +45,31 @@ AUTH_REJECTED = False
 SUSPICIOUS = {"mimikatz", "powershell -enc", "nc.exe", "ncat", "meterpreter", "cobaltstrike"}
 
 
-def cg_api_post(path: str, payload: dict, timeout: int = 10, *, queue_on_failure: bool = True):
+def cg_api_post(
+    path: str,
+    payload: dict,
+    timeout: int = 10,
+    *,
+    queue_on_failure: bool = True,
+    idempotency_key: str | None = None,
+):
     url = API.rstrip("/") + path
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": KEY, "X-Tenant-ID": TENANT}, method="POST")
+    if idempotency_key is None:
+        canonical = json.dumps(
+            {"kind": "POST", "path": path, "payload": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        idempotency_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": KEY,
+        "X-Tenant-ID": TENANT,
+        "X-CG-Event-ID": idempotency_key,
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -265,14 +287,14 @@ def net_scan():
         print(f"[agent] netwatch error: {e}")
 
 
-def _deliver_queued_record(path: str, payload: dict):
+def _deliver_queued_record(path: str, payload: dict, record_id: str | None = None):
     # Registrations double as heartbeats and contain a short-lived HMAC
     # timestamp. Old queued registrations expire; a fresh heartbeat is sent
     # every scan, so acknowledge legacy queued copies instead of retrying them
     # forever after reconnect.
     if path == "/v1/assets/register":
         return True, {"status": "superseded_by_fresh_heartbeat"}
-    return cg_api_post(path, payload)
+    return cg_api_post(path, payload, idempotency_key=record_id)
 
 
 def scan_once():
