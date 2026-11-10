@@ -38,3 +38,10 @@ def test_hardened_start_skips_bootstrap_agent_by_default():
     source = (ROOT / "start.sh").read_text(encoding="utf-8")
     assert "CG_ENABLE_LAB_BOOTSTRAP_AGENT" in source
     assert "hardened-mode safety default" in source
+
+
+def test_credential_setup_never_prints_generated_secret_values():
+    source = (ROOT / "scripts" / "setup_credentials.sh").read_text(encoding="utf-8")
+    assert 'print(f"Admin API key' not in source
+    assert 'print(f"Agent API key' not in source
+    assert "Secret values are intentionally NOT printed." in source
