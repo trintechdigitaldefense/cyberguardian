@@ -97,6 +97,7 @@ jobs:
               "admin_password_hash": f"pbkdf2_sha256${rounds}${encode(salt)}${encode(digest)}",
               "api_key": sys.argv[2],
               "agent_api_key": "compose-agent-" + secrets.token_urlsafe(24),
+              "audit_checkpoint_key_hex": secrets.token_hex(32),
           }
           target = data / "credentials.json"
           target.write_text(json.dumps(record), encoding="utf-8")
@@ -166,8 +167,25 @@ jobs:
           PY
           docker compose -p "$PROJECT" exec -T api python - <<'PY'
           import os
+          import time
+          import secrets
           import httpx
+          import agent_credentials
+          import agent_identity
+
           base = "http://127.0.0.1:8080"
+          agent = {
+              "tenant_id": "default",
+              "api_key": "compose-agent-" + secrets.token_urlsafe(32),
+              "identity_secret": secrets.token_urlsafe(32),
+              "command_secret": secrets.token_urlsafe(32),
+              "status": "active",
+          }
+          agent_credentials.write_agent_credentials({"compose-host": agent})
+          fingerprint = agent_identity.host_fingerprint("compose-host", "linux-test", "compose-machine")
+          identity_ts = time.time()
+          identity_sig = agent_identity.sign_registration("compose-host", fingerprint, identity_ts)
+
           with httpx.Client(timeout=5.0) as client:
               nad_read = client.get(base + "/v1/fleet", headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]})
               assert nad_read.status_code == 403, nad_read.text
@@ -176,6 +194,17 @@ jobs:
                   headers={"X-API-Key": os.environ["CG_DASHBOARD_API_KEY"], "X-Tenant-ID": "default"},
               )
               assert dashboard_agent.status_code == 403, dashboard_agent.text
+              registered = client.post(
+                  base + "/v1/assets/register",
+                  headers={"X-API-Key": agent["api_key"], "X-Tenant-ID": "default"},
+                  json={
+                      "asset_id": "compose-host", "tenant_id": "default",
+                      "hostname": "compose-host", "os": "linux-test",
+                      "machine_id": "compose-machine", "fingerprint": fingerprint,
+                      "identity_ts": identity_ts, "identity_sig": identity_sig,
+                  },
+              )
+              assert registered.status_code == 200, registered.text
               detection = client.post(
                   base + "/v1/detections",
                   headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]},
