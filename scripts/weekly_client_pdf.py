@@ -7,6 +7,7 @@ import csv
 import html
 import json
 import os
+import stat
 import tempfile
 import sys
 import urllib.parse
@@ -15,6 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _ensure_private_output_dir(directory: Path) -> None:
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if stat.S_IMODE(directory.stat().st_mode) & 0o077:
+        raise PermissionError(f"report output directory must be private (0700): {directory}")
 
 
 def _request(api: str, key: str, path: str, tenant_id: str, accept: str):
@@ -49,7 +57,9 @@ def fetch_scorecard(api: str, key: str, tenant_id: str) -> dict:
         if not isinstance(result, dict):
             raise RuntimeError("pilot scorecard response must be a JSON object")
         response_tenant = result.get("tenant_id")
-        if response_tenant is not None and str(response_tenant) != tenant_id:
+        if not response_tenant:
+            raise RuntimeError("pilot scorecard response is missing its tenant identity")
+        if str(response_tenant) != tenant_id:
             raise RuntimeError("pilot scorecard tenant does not match requested tenant")
         return result
 
@@ -70,8 +80,11 @@ def build_pdf(
     except ImportError as exc:
         raise RuntimeError("ReportLab is required to generate a client PDF; install dashboard/report dependencies") from exc
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    doc = SimpleDocTemplate(str(out), pagesize=letter, leftMargin=0.75 * inch, rightMargin=0.75 * inch)
+    out = Path(out)
+    _ensure_private_output_dir(out.parent)
+    fd, temp_name = tempfile.mkstemp(prefix=out.name + ".", suffix=".tmp", dir=str(out.parent))
+    os.close(fd)
+    doc = SimpleDocTemplate(temp_name, pagesize=letter, leftMargin=0.75 * inch, rightMargin=0.75 * inch)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "CGTitle", parent=styles["Heading1"], textColor=HexColor("#0e7490"),
@@ -105,7 +118,23 @@ def build_pdf(
         "Supervised pilot — keep Client Mode ON for production hosts.",
         styles["Normal"],
     ))
-    doc.build(body)
+    try:
+        doc.build(body)
+        with open(temp_name, "rb") as handle:
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, out)
+        os.chmod(out, 0o600)
+        dir_fd = os.open(str(out.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
     return out
 
 
@@ -119,7 +148,9 @@ def _safe_csv_cell(value) -> str:
 def build_csv(scorecard: dict, out: Path, *, tenant_id: str) -> Path:
     """Atomically export tenant-scoped scorecard rows with spreadsheet formula protection."""
     out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_output_dir(out.parent)
+    if not str(tenant_id).strip() or str(scorecard.get("tenant_id") or "") != str(tenant_id):
+        raise RuntimeError("CSV export tenant identity is missing or does not match")
     checks = scorecard.get("checks") or []
     if not isinstance(checks, list):
         raise RuntimeError("scorecard checks must be a list")
@@ -174,11 +205,7 @@ def main():
     args = parser.parse_args()
 
     if not args.key:
-        credentials = ROOT / "data" / "credentials.json"
-        if credentials.exists():
-            args.key = json.loads(credentials.read_text(encoding="utf-8")).get("api_key") or ""
-    if not args.key:
-        parser.error("Set CYBERGUARDIAN_API_KEY or provide --key")
+        parser.error("Set a tenant-authorized CYBERGUARDIAN_API_KEY or provide --key; the global administrator key is never loaded automatically")
     if not args.tenant_id:
         parser.error("A tenant is required: set CYBERGUARDIAN_TENANT or provide --tenant-id")
 
