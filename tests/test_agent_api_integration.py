@@ -227,6 +227,57 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             assert len(rows) == 1
             assert rows[0]["last_seen"] > first_seen
 
+        # A lost acknowledgement can cause an offline-queue replay. The
+        # controller must return the original response without repeating the
+        # detection-side database transaction.
+        detection_payload = {
+            "asset_id": "host-a",
+            "tenant_id": "tenant-a",
+            "source": "agent",
+            "severity": "medium",
+            "confidence": 0.75,
+            "title": "R4 idempotency integration",
+            "description": "A deterministic replay must not create a second detection.",
+            "indicators": {},
+            "tags": ["r4", "idempotency"],
+        }
+        detection_canonical = json.dumps(
+            {
+                "kind": "POST",
+                "path": "/v1/detections",
+                "payload": detection_payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        detection_event_id = hashlib.sha256(detection_canonical.encode("utf-8")).hexdigest()
+        detection_headers = {**headers, "X-CG-Event-ID": detection_event_id}
+        first_detection = client.post(
+            "/v1/detections", headers=detection_headers, json=detection_payload
+        )
+        assert 200 <= first_detection.status_code < 300, first_detection.text
+        replayed_detection = client.post(
+            "/v1/detections", headers=detection_headers, json=detection_payload
+        )
+        assert replayed_detection.status_code == first_detection.status_code
+        assert replayed_detection.content == first_detection.content
+        assert replayed_detection.headers.get("x-cg-idempotent-replay") == "true"
+        with main._mod.db() as conn:
+            replay_rows = conn.execute(
+                """
+                SELECT COUNT(*) FROM cg_agent_idempotency
+                WHERE tenant_id=? AND asset_id=? AND event_id=? AND path=?
+                """,
+                ("tenant-a", "host-a", detection_event_id, "/v1/detections"),
+            ).fetchone()[0]
+            assert replay_rows == 1
+        matching_issues = [
+            item for item in main._issue_memory.list_issues(tenant_id="tenant-a")
+            if item.get("title") == detection_payload["title"]
+        ]
+        assert len(matching_issues) <= 1
+
         wrong_tenant_registration = client.post(
             "/v1/assets/register",
             headers={**headers, "X-Tenant-ID": "tenant-b"},
