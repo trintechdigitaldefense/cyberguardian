@@ -81,7 +81,7 @@ def _severity_label(value: Any) -> str:
         "low": "Informational",
     }.get(raw, "Priority not classified")
 
-def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime | None = None) -> bytes:
+def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime | None = None, report_period: dict | None = None) -> bytes:
     """Build an in-memory PDF; never writes client data to the dashboard filesystem."""
     if not tenant_id or str(snapshot.get("tenant_id") or "") != str(tenant_id):
         raise ValueError("report tenant identity is missing or does not match")
@@ -94,6 +94,38 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
     gate = snapshot.get("gate") if isinstance(snapshot.get("gate"), dict) else {}
     issues = _items(snapshot.get("issues"), "items")
     audit = _items(snapshot.get("audit"), "items")
+    period_start = period_end = None
+    if report_period is not None:
+        if not isinstance(report_period, dict) or report_period.get("timezone") != "UTC" or report_period.get("boundary") != "[start, end)":
+            raise ValueError("historical report period semantics are invalid")
+        try:
+            period_start = datetime.fromisoformat(str(report_period["start"]).replace("Z", "+00:00"))
+            period_end = datetime.fromisoformat(str(report_period["end"]).replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("historical report period is invalid") from exc
+        if period_start.tzinfo is None or period_end.tzinfo is None or period_end <= period_start:
+            raise ValueError("historical report period must be timezone-aware and increasing")
+        period_start = period_start.astimezone(timezone.utc)
+        period_end = period_end.astimezone(timezone.utc)
+        seen_ids = set()
+        for entry in audit:
+            source_id = str(entry.get("source_record_id") or "")
+            if not source_id or source_id in seen_ids:
+                raise ValueError("historical audit source IDs are missing or duplicated")
+            seen_ids.add(source_id)
+            if str(entry.get("tenant_id") or "") != str(tenant_id):
+                raise ValueError("historical audit record tenant identity is missing or mismatched")
+            try:
+                event_time = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("historical audit record timestamp is invalid") from exc
+            if event_time.tzinfo is None:
+                raise ValueError("historical audit record timestamp must include a timezone")
+            event_time = event_time.astimezone(timezone.utc)
+            if not (period_start <= event_time < period_end):
+                raise ValueError("historical audit record falls outside the requested reporting period")
+        if int(report_period.get("source_record_count", -1)) != len(audit):
+            raise ValueError("historical audit source count does not match report records")
     pending = _items(gate, "pending")
     assets = _number(risk, "total_assets", "assets_total")
     online = _number(risk, "online")
@@ -141,6 +173,13 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         Paragraph(
             f"<b>Client reference:</b> {html.escape(_plain(tenant_id, 100))}<br/>"
             f"<b>Generated:</b> {generated_at.astimezone(timezone.utc).strftime('%d %b %Y, %H:%M UTC')}<br/>"
+            (
+                f"<b>Activity reporting period:</b> {period_start.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+                f"to {period_end.strftime('%Y-%m-%d %H:%M:%S UTC')} (start inclusive, end exclusive)<br/>"
+                f"<b>Historical activity records:</b> {len(audit)} verified, tenant-matched records<br/>"
+                f"<b>Audit checkpoint:</b> {html.escape(_plain(report_period.get('snapshot_head'), 80))}<br/>"
+                "<b>Other monitoring figures:</b> Current snapshot at report generation time"
+            ) if report_period is not None else
             "<b>Coverage:</b> Current monitoring snapshot and the available recent activity summary",
             styles["CGBody"],
         ),
@@ -212,6 +251,37 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
             event_counts[label] = event_counts.get(label, 0) + 1
         for label, count in sorted(event_counts.items()):
             story.append(Paragraph(f"• {label}: {count} record(s)", styles["CGBody"]))
+        if report_period is not None:
+            story.append(Paragraph("Historical activity source records", styles["CGSection"]))
+            story.append(Paragraph(
+                "Each row identifies a verified audit-ledger record included in this reporting period. "
+                "Times are UTC. The start is inclusive and the end is exclusive.",
+                styles["CGSmall"],
+            ))
+            source_rows = [["Time (UTC)", "Recorded activity", "Source record ID"]]
+            for entry in audit:
+                event_time = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00"))
+                event_label = translate(entry.get("event") or entry.get("action") or "Recorded activity")
+                source_rows.append([
+                    event_time.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    html.escape(_plain(event_label, 100)),
+                    html.escape(_plain(entry["source_record_id"], 80)),
+                ])
+            source_table = Table(
+                source_rows,
+                colWidths=[1.35*inch, 2.0*inch, 2.8*inch],
+                repeatRows=1,
+            )
+            source_table.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#eef4f8")),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE", (0,0), (-1,-1), 6.5),
+                ("GRID", (0,0), (-1,-1), .3, colors.HexColor("#d5e0e8")),
+                ("VALIGN", (0,0), (-1,-1), "TOP"),
+                ("TOPPADDING", (0,0), (-1,-1), 3),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+            ]))
+            story.append(source_table)
     else:
         story.append(Paragraph("No recent activity records were returned.", styles["CGBody"]))
     weekly = _plain(snapshot.get("weekly_summary"), 5000)
