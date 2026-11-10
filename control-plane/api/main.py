@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -46,6 +47,25 @@ app = _mod.app
 # Dashboard operator assertions are verified at the gateway boundary. Agent
 # credentials are handled by the existing asset-scoped middleware below.
 import operator_context as _operator_context
+_logger = logging.getLogger("cyberguardian.operator_audit")
+_original_write_audit = _mod.write_audit
+
+
+def _write_audit_with_operator(*args, **kwargs):
+    claims = _operator_context.CURRENT_OPERATOR.get()
+    if claims:
+        kwargs["actor"] = claims["sub"]
+        detail = str(kwargs.get("detail") or "")
+        context = json.dumps({
+            "actor_role": claims["role"],
+            "tenant_id": claims["tenant_id"],
+            "request_id": claims["request_id"],
+        }, sort_keys=True, separators=(",", ":"))
+        kwargs["detail"] = (detail + " | " + context).strip(" |")
+    return _original_write_audit(*args, **kwargs)
+
+
+_mod.write_audit = _write_audit_with_operator
 
 
 @app.middleware("http")
@@ -77,7 +97,35 @@ async def _verify_dashboard_operator(request: Request, call_next):
         request.state.operator_context = claims
         context_token = _operator_context.CURRENT_OPERATOR.set(claims)
         try:
-            return await call_next(request)
+            # Persist an authorization record before a state-changing handler
+            # can run. If the audit store is unavailable, fail closed.
+            try:
+                _mod.write_audit(
+                    event="operator_request_started",
+                    action=request.method,
+                    target=request.url.path,
+                    actor=claims["sub"],
+                    detail="operator request authorized",
+                    result_ok=1,
+                )
+            except Exception:
+                _logger.exception("operator audit start write failed")
+                return JSONResponse({"detail": "operator audit store unavailable"}, status_code=503)
+            response = await call_next(request)
+            try:
+                _mod.write_audit(
+                    event="operator_request_completed",
+                    action=request.method,
+                    target=request.url.path,
+                    actor=claims["sub"],
+                    detail=f"HTTP {response.status_code}",
+                    result_ok=1 if response.status_code < 400 else 0,
+                )
+            except Exception:
+                # The start record remains durable and explicitly shows that
+                # the request entered the handler; operators must investigate.
+                _logger.exception("operator audit completion write failed")
+            return response
         finally:
             _operator_context.CURRENT_OPERATOR.reset(context_token)
     return await call_next(request)
