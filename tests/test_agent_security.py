@@ -144,3 +144,19 @@ def test_agent_fingerprint_change_is_detected(tmp_path, monkeypatch):
     assert warning and "fingerprint_changed" in warning
     agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-two", "host")
     assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two") is None
+
+
+
+def test_corrupt_fingerprint_store_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_identity, "DATA", tmp_path)
+    fingerprint_store = tmp_path / "agent_fingerprints.json"
+    monkeypatch.setattr(agent_identity, "FINGERPRINTS", fingerprint_store)
+    fingerprint_store.write_text('{"host-a": ', encoding="utf-8")
+
+    try:
+        agent_identity.remember_fingerprint("host-a", "new-fingerprint", "host-a")
+    except RuntimeError as exc:
+        assert "unreadable" in str(exc)
+    else:
+        raise AssertionError("corrupt identity history must not be silently reset")
+    assert fingerprint_store.read_text(encoding="utf-8") == '{"host-a": '
