@@ -47,7 +47,7 @@ def test_unknown_timestamp_and_revoked_state_are_not_marked_online():
 
 
 def test_fleet_projection_does_not_mutate_source_records():
-    source = [{"asset_id": "a", "status": "online", "last_seen": 0}]
+    source = [{"asset_id": "a", "status": "online", "last_seen": 1}]
     projected = fleet.project_fleet_lifecycle(source, now=1000, stale_after_seconds=30)
     assert source[0]["status"] == "online"
     assert projected[0]["status"] == "offline"
