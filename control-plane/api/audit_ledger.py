@@ -24,6 +24,26 @@ class LedgerIntegrityError(RuntimeError):
     pass
 
 
+def _open_lock(path: Path, operation: int) -> int:
+    path = Path(path)
+    if path.is_symlink():
+        raise PermissionError(f"audit lock must not be a symlink: {path}")
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        raise
+    fcntl.flock(fd, operation)
+    return fd
+
+
+def _reject_symlink(path: Path, label: str) -> None:
+    if Path(path).is_symlink():
+        raise PermissionError(f"{label} must not be a symlink: {path}")
+
+
 def _canonical(value: dict[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       default=str).encode("utf-8")
@@ -36,6 +56,7 @@ def _hash_record(record: dict[str, Any]) -> str:
 
 def _verify_ledger_unlocked(path: Path) -> dict[str, Any]:
     path = Path(path)
+    _reject_symlink(path, "audit ledger")
     if not path.exists():
         return {"valid": True, "records": 0, "head": GENESIS}
     previous = GENESIS
@@ -67,10 +88,8 @@ def verify_ledger(path: Path) -> dict[str, Any]:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_fd = _open_lock(lock_path, fcntl.LOCK_SH)
     try:
-        os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_SH)
         return _verify_ledger_unlocked(path)
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -79,12 +98,11 @@ def verify_ledger(path: Path) -> dict[str, Any]:
 
 def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
     path = Path(path)
+    _reject_symlink(path, "audit ledger")
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_fd = _open_lock(lock_path, fcntl.LOCK_EX)
     try:
-        os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
         status = _verify_ledger_unlocked(path)
         if not status["valid"]:
             raise LedgerIntegrityError(status["error"])
@@ -124,14 +142,14 @@ def export_verified_ledger(source: Path, destination: Path) -> dict[str, Any]:
     """Copy a verified, consistent ledger snapshot to a protected destination."""
     source = Path(source)
     destination = Path(destination)
+    _reject_symlink(source, "audit source")
+    _reject_symlink(destination, "audit destination")
     if source.resolve() == destination.resolve():
         raise ValueError("audit export destination must differ from source")
     destination.parent.mkdir(parents=True, exist_ok=True)
     lock_path = source.with_name(source.name + ".lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_fd = _open_lock(lock_path, fcntl.LOCK_SH)
     try:
-        os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_SH)
         status = _verify_ledger_unlocked(source)
         if not status["valid"]:
             raise LedgerIntegrityError(status["error"])
@@ -190,6 +208,7 @@ def export_signed_checkpoint(source: Path, destination: Path, key: bytes) -> dic
     signature = hmac.new(key, _canonical(signed), hashlib.sha256).hexdigest()
     signed["signature"] = signature
     manifest_path = Path(str(destination) + ".manifest.json")
+    _reject_symlink(manifest_path, "audit checkpoint manifest")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
         prefix=manifest_path.name + ".", suffix=".tmp", dir=str(manifest_path.parent)
@@ -222,6 +241,8 @@ def verify_signed_checkpoint(snapshot: Path, key: bytes) -> dict[str, Any]:
         raise ValueError("checkpoint signing key must contain at least 32 random bytes")
     snapshot = Path(snapshot)
     manifest_path = Path(str(snapshot) + ".manifest.json")
+    _reject_symlink(snapshot, "audit checkpoint snapshot")
+    _reject_symlink(manifest_path, "audit checkpoint manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("checkpoint manifest must be a JSON object")
