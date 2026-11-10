@@ -341,6 +341,11 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             json=command_result_payload,
         )
         assert reported.status_code == 200, reported.text
+        with main._mod.db() as conn:
+            conn.execute(
+                "UPDATE cg_agent_idempotency SET created_at=? WHERE tenant_id=? AND asset_id=? AND event_id=?",
+                (time.time() - 365 * 24 * 60 * 60, "tenant-a", "host-a", event_id),
+            )
         replayed = client.post(
             "/v1/agent/command-result",
             headers=idempotent_headers,
