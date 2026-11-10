@@ -160,6 +160,12 @@ def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     login_page = client.get("/login")
     assert login_page.status_code == 200
     assert login_page.headers.get("cache-control") == "no-store"
+    csp = login_page.headers.get("content-security-policy", "")
+    assert "unsafe-inline" not in csp
+    assert "script-src 'self'" in csp
+    assert "style-src 'self'" in csp
+    assert client.get("/static/login.css").status_code == 200
+    assert client.get("/static/dashboard.js").status_code == 200
     login_token = re.search(r'name="login_csrf" value="([^"]+)"', login_page.text).group(1)
     invalid_login = client.post(
         "/login",
