@@ -25,15 +25,20 @@ Create a private `.env` file beside the Compose deployment file. Generate the de
 openssl rand -hex 32
 ```
 
-Set these values:
+Run `./scripts/setup_credentials.sh` to create the administrator credential and four distinct service/signing secrets. Copy the generated service values into the private Compose `.env` file. Set:
 
-- `CYBERGUARDIAN_API_KEY`: must match the admin API key stored by `scripts/setup_credentials.sh`.
-- `DECISION_SERVICE_API_KEY`: at least 32 random characters; Compose passes the same value to the API gateway and decision service.
+- `CYBERGUARDIAN_API_KEY`: must match the administrator API key stored in `data/credentials.json`.
+- `CG_DASHBOARD_API_KEY`: dedicated dashboard-to-gateway identity; at least 32 bytes.
+- `CG_NAD_API_KEY`: dedicated NAD-to-gateway identity; at least 32 bytes and scoped to detection submission only.
+- `CG_OPERATOR_ASSERTION_SECRET`: dedicated HMAC secret used to bind dashboard requests to the authenticated operator, tenant, method and path; at least 32 bytes.
+- `DECISION_SERVICE_API_KEY`: dedicated gateway-to-decision-service identity; at least 32 bytes.
 - `CG_PRODUCTION=1`
 - `CG_REQUIRE_AGENT_IDENTITY=1`
 - `CG_COOKIE_SECURE=1`
 - `CG_ALLOWED_ORIGINS`: comma-separated exact browser origins, for example `https://guardian.example.com`. Never use `*`.
 - `CG_DATA_HOST_DIR`: persistent host directory for credentials, database, and dashboard sessions.
+
+All five administrator/service/signing values must be at least 32 bytes and pairwise unique. Never reuse the administrator key as a dashboard, NAD, decision-service or operator-signing secret. Standalone `./start.sh` reads the generated service secrets from `data/credentials.json`; production startup fails before launching services if they are absent, too short or duplicated.
 
 Keep `.env`, `data/credentials.json`, and the dashboard SQLite database out of Git. Restrict the data directory to the service operator (directory mode 700; credential and database files mode 600).
 
@@ -56,7 +61,7 @@ The dashboard authentication database is stored under `CG_DATA_DIR`; mount that 
 
 ## Service authentication and CORS
 
-Every decision-service `/v1/*` route requires `X-Decision-Service-Key` when a key is configured. In production, a missing key returns 503 and an invalid key returns 401. The gateway's deterministic assembler patch adds the same header to its decision, execute, and action-dispatch requests.
+Every decision-service `/v1/*` route requires `X-Decision-Service-Key`; in production, a missing key returns 503 and an invalid key returns 401. The gateway's deterministic assembler patch adds the same header to its decision, execute, and action-dispatch requests. The dashboard service key is limited to the documented dashboard routes and requires a request-bound operator assertion in production. The NAD service key is limited to `POST /v1/detections`. Unknown service identities and out-of-scope methods/routes are denied.
 
 The API gateway CORS policy is generated from `CG_ALLOWED_ORIGINS`. The assembler rejects an empty origin list or wildcard origin. If the operator dashboard is hosted behind a reverse proxy, configure the exact HTTPS origin and ensure the proxy terminates TLS.
 
