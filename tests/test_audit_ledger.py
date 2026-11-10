@@ -89,3 +89,41 @@ def test_export_refuses_corrupt_source(tmp_path):
         pass
     else:
         raise AssertionError("corrupt audit source must not be exported")
+
+
+
+def test_signed_checkpoint_verifies_and_rejects_wrong_key_or_tampering(tmp_path):
+    source = tmp_path / "live-audit.jsonl"
+    snapshot = tmp_path / "backup" / "audit.jsonl"
+    key = b"k" * 32
+    ledger.append_event(source, {"event": "operator-action", "actor": "operator-a"})
+    ledger.export_signed_checkpoint(source, snapshot, key)
+    verified = ledger.verify_signed_checkpoint(snapshot, key)
+    assert verified["valid"] is True
+    assert verified["records"] == 1
+
+    try:
+        ledger.verify_signed_checkpoint(snapshot, b"x" * 32)
+    except ledger.LedgerIntegrityError:
+        pass
+    else:
+        raise AssertionError("wrong checkpoint key must be rejected")
+
+    snapshot.write_bytes(snapshot.read_bytes() + b'{"tampered":true}\\n')
+    try:
+        ledger.verify_signed_checkpoint(snapshot, key)
+    except ledger.LedgerIntegrityError:
+        pass
+    else:
+        raise AssertionError("modified checkpoint snapshot must be rejected")
+
+
+def test_signed_checkpoint_requires_strong_key(tmp_path):
+    source = tmp_path / "live-audit.jsonl"
+    ledger.append_event(source, {"event": "test"})
+    try:
+        ledger.export_signed_checkpoint(source, tmp_path / "backup.jsonl", b"short")
+    except ValueError as exc:
+        assert "32 random bytes" in str(exc)
+    else:
+        raise AssertionError("weak checkpoint key must be rejected")
