@@ -334,3 +334,18 @@ def test_issue_archive_export_refuses_overwrite_and_symlink(tmp_path, monkeypatc
     else:
         raise AssertionError("symlinked archive export destination must be rejected")
     assert target.read_text(encoding="utf-8") == "untouched"
+
+    raced_output = output_dir / "raced.jsonl"
+
+    def create_destination_during_link(_temporary, destination, follow_symlinks=False):
+        Path(destination).write_text("created by concurrent writer", encoding="utf-8")
+        raise FileExistsError(destination)
+
+    monkeypatch.setattr(issue_memory.os, "link", create_destination_during_link)
+    try:
+        issue_memory.export_archived_issues(raced_output, "tenant-a")
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("concurrent destination creation must not be overwritten")
+    assert raced_output.read_text(encoding="utf-8") == "created by concurrent writer"
