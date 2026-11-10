@@ -74,6 +74,15 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     main._mod.CREDS_PATH = data_dir / "credentials.json"
 
     with TestClient(main.app) as client:
+        with main._mod.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
+                ("asset-tenant-a", "tenant-a", "host-a"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
+                ("asset-tenant-b", "tenant-b", "host-b"),
+            )
         dashboard_headers = {"X-API-Key": dashboard_key, "X-Tenant-ID": "tenant-a"}
         missing_assertion = client.get("/v1/fleet", headers=dashboard_headers)
         assert missing_assertion.status_code == 401
@@ -104,6 +113,9 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             },
         )
         assert authorized.status_code == 200, authorized.text
+        fleet_items = authorized.json().get("items", [])
+        assert any(item.get("asset_id") == "asset-tenant-a" for item in fleet_items), authorized.text
+        assert not any(item.get("asset_id") == "asset-tenant-b" for item in fleet_items), authorized.text
 
         audit_assertion = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
