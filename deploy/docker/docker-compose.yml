@@ -15,6 +15,8 @@ services:
       DECISION_SERVICE_API_KEY: ${DECISION_SERVICE_API_KEY:?set DECISION_SERVICE_API_KEY in the deployment environment}
       CG_ALLOWED_ORIGINS: ${CG_ALLOWED_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
       CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
+      CG_DASHBOARD_API_KEY: ${CG_DASHBOARD_API_KEY:?set CG_DASHBOARD_API_KEY (unique 32+ random bytes)}
+      CG_NAD_API_KEY: ${CG_NAD_API_KEY:?set CG_NAD_API_KEY (unique 32+ random bytes)}
       CG_OPERATOR_ASSERTION_SECRET: ${CG_OPERATOR_ASSERTION_SECRET:?set CG_OPERATOR_ASSERTION_SECRET (32+ random bytes)}
       CG_DATA_DIR: /app/data
       CG_PRODUCTION: ${CG_PRODUCTION:-1}
@@ -27,7 +29,7 @@ services:
     build: ../../control-plane/nad-processor
     environment:
       API_URL: http://api:8080
-      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
+      CG_NAD_API_KEY: ${CG_NAD_API_KEY:?set CG_NAD_API_KEY (unique 32+ random bytes)}
     depends_on: [api]
     networks: [cg-backend]
   dashboard:
@@ -35,7 +37,7 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     environment:
       API_URL: http://api:8080
-      CYBERGUARDIAN_API_KEY: ${CYBERGUARDIAN_API_KEY:?set CYBERGUARDIAN_API_KEY in the deployment environment}
+      CG_DASHBOARD_API_KEY: ${CG_DASHBOARD_API_KEY:?set CG_DASHBOARD_API_KEY (unique 32+ random bytes)}
       CG_OPERATOR_ASSERTION_SECRET: ${CG_OPERATOR_ASSERTION_SECRET:?set CG_OPERATOR_ASSERTION_SECRET (32+ random bytes)}
       CG_DATA_DIR: /app/data
       CG_PRODUCTION: ${CG_PRODUCTION:-1}
