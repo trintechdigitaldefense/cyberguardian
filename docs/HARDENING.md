@@ -42,6 +42,30 @@ All five administrator/service/signing values must be at least 32 bytes and pair
 
 Keep `.env`, `data/credentials.json`, and the dashboard SQLite database out of Git. Restrict the data directory to the service operator (directory mode 700; credential and database files mode 600). If the bootstrap admin or lab-agent key has been exposed, rerun setup with a blank admin-key prompt and `CG_ROTATE_BOOTSTRAP_AGENT_KEY=1` to generate fresh bootstrap credentials; this does not rotate enrolled per-device credentials.
 
+## Audit checkpoint and recovery
+
+Credential setup provisions a separate 256-bit HMAC checkpoint key as `audit_checkpoint_key_hex`. The audit export, verify and restore commands read it from `data/credentials.json` (or the configured `CG_DATA_DIR`) unless `CG_AUDIT_CHECKPOINT_KEY_HEX` is explicitly supplied. Copy the key into an independent secrets manager or offline recovery store; the controller's local credential file must not be its only copy.
+
+Create a verified signed checkpoint on an independently mounted destination:
+
+```bash
+python3 scripts/export_audit_ledger.py --out /secure/offhost/cyberguardian-audit.jsonl --checkpoint-dir /secure/offhost/checkpoints
+```
+
+Verify the manifest and snapshot before relying on them:
+
+```bash
+python3 scripts/verify_audit_checkpoint.py --manifest /secure/offhost/checkpoints/<manifest>.json
+```
+
+Perform a recovery drill on a clean, isolated controller using the independently stored checkpoint key:
+
+```bash
+python3 scripts/restore_audit_checkpoint.py --manifest /secure/offhost/checkpoints/<manifest>.json --out /var/lib/cyberguardian/audit-ledger.jsonl
+```
+
+Record the source commit, checkpoint timestamp, verification output, restore output and independent storage location in the pilot evidence pack. A local checkpoint alone is not an off-host backup or a completed restore drill.
+
 ## Dashboard authentication
 
 Run `./scripts/setup_credentials.sh` before production startup. It writes the administrator password as a salted PBKDF2-HMAC-SHA256 hash and atomically replaces the credentials file; it no longer stores plaintext passwords.
