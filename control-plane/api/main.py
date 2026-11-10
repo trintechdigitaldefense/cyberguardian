@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -111,6 +112,50 @@ def _write_audit_with_operator(*args, **kwargs):
 _mod.write_audit = _write_audit_with_operator
 
 
+def _asset_matches_tenant(asset_id: str, tenant_id: str) -> bool:
+    if not asset_id:
+        return False
+    try:
+        with _mod.db() as conn:
+            row = conn.execute(
+                "SELECT tenant_id FROM assets WHERE asset_id = ?",
+                (asset_id,),
+            ).fetchone()
+    except Exception:
+        _logger.exception("asset tenant lookup failed")
+        return False
+    return bool(row) and str(row["tenant_id"] or "default") == tenant_id
+
+
+def _pending_action_matches_tenant(action_id: str, tenant_id: str) -> bool:
+    if not action_id:
+        return False
+    try:
+        with _mod.db() as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_actions)")}
+            if "id" not in columns:
+                return False
+            if "asset_id" in columns:
+                row = conn.execute(
+                    "SELECT asset_id" + (", tenant_id" if "tenant_id" in columns else "")
+                    + " FROM pending_actions WHERE id = ?",
+                    (action_id,),
+                ).fetchone()
+                if not row:
+                    return False
+                if "tenant_id" in columns and str(row["tenant_id"] or "default") != tenant_id:
+                    return False
+                return _asset_matches_tenant(str(row["asset_id"] or ""), tenant_id)
+            if "tenant_id" in columns:
+                row = conn.execute(
+                    "SELECT tenant_id FROM pending_actions WHERE id = ?", (action_id,)
+                ).fetchone()
+                return bool(row) and str(row["tenant_id"] or "default") == tenant_id
+    except Exception:
+        _logger.exception("pending action tenant lookup failed")
+    return False
+
+
 @app.middleware("http")
 async def _verify_dashboard_operator(request: Request, call_next):
     api_key = str(request.headers.get("X-API-Key") or "")
@@ -157,6 +202,23 @@ async def _verify_dashboard_operator(request: Request, call_next):
                 body_tenant = body_claims.get("tenant_id")
                 if body_tenant and str(body_tenant) != claims["tenant_id"]:
                     return JSONResponse({"detail": "operator tenant does not match request body tenant"}, status_code=403)
+                if request.url.path == "/v1/feedback/benign":
+                    asset_id = str(body_claims.get("asset_id") or "")
+                    pending_id = str(body_claims.get("pending_action_id") or "")
+                    if asset_id and not _asset_matches_tenant(asset_id, claims["tenant_id"]):
+                        return JSONResponse({"detail": "asset is outside the operator tenant"}, status_code=403)
+                    if pending_id and not _pending_action_matches_tenant(pending_id, claims["tenant_id"]):
+                        return JSONResponse({"detail": "pending action is outside the operator tenant"}, status_code=403)
+
+        rollback_match = re.fullmatch(r"/v1/rollback/([A-Za-z0-9_.:-]{1,128})", request.url.path)
+        if rollback_match and not _asset_matches_tenant(rollback_match.group(1), claims["tenant_id"]):
+            return JSONResponse({"detail": "asset is outside the operator tenant"}, status_code=403)
+        pending_match = re.fullmatch(
+            r"/v1/gate/(?:approve|reject)/([A-Za-z0-9_.:-]{1,128})",
+            request.url.path,
+        )
+        if pending_match and not _pending_action_matches_tenant(pending_match.group(1), claims["tenant_id"]):
+            return JSONResponse({"detail": "pending action is outside the operator tenant"}, status_code=403)
 
         async def replay_operator_body():
             return {"type": "http.request", "body": raw_body, "more_body": False}
