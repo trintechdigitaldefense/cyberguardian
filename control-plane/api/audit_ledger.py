@@ -33,7 +33,7 @@ def _hash_record(record: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical(payload)).hexdigest()
 
 
-def verify_ledger(path: Path) -> dict[str, Any]:
+def _verify_ledger_unlocked(path: Path) -> dict[str, Any]:
     path = Path(path)
     if not path.exists():
         return {"valid": True, "records": 0, "head": GENESIS}
@@ -61,6 +61,21 @@ def verify_ledger(path: Path) -> dict[str, Any]:
     return {"valid": True, "records": count, "head": previous}
 
 
+
+def verify_ledger(path: Path) -> dict[str, Any]:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_SH)
+        return _verify_ledger_unlocked(path)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
 def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +84,7 @@ def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
     try:
         os.fchmod(lock_fd, 0o600)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        status = verify_ledger(path)
+        status = _verify_ledger_unlocked(path)
         if not status["valid"]:
             raise LedgerIntegrityError(status["error"])
         record = {
@@ -84,9 +99,12 @@ def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
         fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
         try:
             os.fchmod(fd, 0o600)
-            written = os.write(fd, encoded)
-            if written != len(encoded):
-                raise OSError("short append to audit ledger")
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short append to audit ledger")
+                view = view[written:]
             os.fsync(fd)
         finally:
             os.close(fd)
