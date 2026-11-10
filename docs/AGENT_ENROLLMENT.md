@@ -27,16 +27,24 @@ On the controller host, run:
 python3 scripts/enroll_agent.py --asset-id linux-server-01 --tenant-id customer-a
 ```
 
-For a local Termux/Linux agent, avoid copying secrets from terminal output by writing a protected environment file directly:
+For a local Termux/Linux agent running on the controller device, you do not need to copy secrets into an environment file. The secure launcher reads the protected registry directly:
+
+```sh
+python3 scripts/enroll_agent.py --asset-id android-termux-controller --tenant-id customer-a
+CG_AGENT_ASSET_ID=android-termux-controller CG_PRODUCTION=1 CG_REQUIRE_AGENT_IDENTITY=1 ./start.sh
+```
+
+For a remote agent, write a protected environment file on the controller and transfer it through your approved secret-delivery process:
 
 ```sh
 python3 scripts/enroll_agent.py \
-  --asset-id android-termux-controller \
+  --asset-id linux-server-01 \
   --tenant-id customer-a \
-  --env-file "$HOME/.config/cyberguardian/agent.env"
+  --api-url https://controller.example.com \
+  --env-file "$HOME/.config/cyberguardian/linux-server-01.env"
 ```
 
-For a remote agent, supply its HTTPS controller URL with `--api-url https://controller.example.com`. Non-loopback HTTP URLs are rejected. The generated environment file is mode 0600 and its parent directory must be private (0700).
+Non-loopback HTTP URLs are rejected. The generated environment file is mode 0600 and its parent directory must be private (0700).
 
 The script stores the agent's API key, identity secret, command-signing secret, tenant and active status in:
 
@@ -44,7 +52,7 @@ The script stores the agent's API key, identity secret, command-signing secret, 
 $CG_DATA_DIR/agent_credentials.json
 ```
 
-The file is written atomically with mode 0600. The script prints the agent environment values once. Transfer them to the device through your approved secret-delivery process.
+The file is written atomically with mode 0600. The enrollment script does not print any secret values. The controller-side launcher can read the registry directly; remote agents must receive the protected environment file through your approved secret-delivery process.
 
 ## 3. Configure the agent
 
@@ -56,7 +64,7 @@ sudo install -m 0600 /dev/null /etc/cyberguardian/agent.env
 sudoedit /etc/cyberguardian/agent.env
 ```
 
-Set the controller URL and all values printed by the enrollment script:
+The protected environment file created with `--env-file` already contains the required values. If you provision the file manually, set:
 
 - `CYBERGUARDIAN_API` (or `CG_CONTROLLER_URL`)
 - `CYBERGUARDIAN_API_KEY`
@@ -73,17 +81,16 @@ Registration is retried with a fresh timestamp on the next heartbeat rather than
 
 ### Running the enrolled agent on the controller device
 
-If the controller and agent run on the same Linux/Termux device, configure startup to use the enrolled environment file:
+If the controller and agent run on the same Linux/Termux device, set the enrolled asset ID and start the stack:
 
 ```sh
-chmod 600 /path/to/agent.env
-export CG_AGENT_ENV_FILE=/path/to/agent.env
+export CG_AGENT_ASSET_ID=android-termux-controller
 export CG_PRODUCTION=1
 export CG_REQUIRE_AGENT_IDENTITY=1
 ./start.sh
 ```
 
-When production identity enforcement is enabled, `start.sh` will not fall back to the shared bootstrap agent key. It starts the local agent only when `CG_AGENT_ENV_FILE` points to a regular file with no group/other permissions and the required per-agent secrets are present. Without that file, the controller services can start, but the local agent is deliberately skipped. For a non-production lab only, the legacy bootstrap agent remains available.
+`start.sh` invokes `scripts/run_enrolled_agent.py`, which loads the active per-device API key, identity secret, command secret and tenant from the protected controller registry without printing them. The launcher refuses revoked, unknown or incomplete records. Alternatively, `CG_AGENT_ENV_FILE` can point to a protected environment file for an enrolled local or remote agent. When production identity enforcement is enabled, `start.sh` never falls back to the shared bootstrap agent key. For a non-production lab only, the legacy bootstrap agent remains available.
 
 ## 4. Verify enrollment
 
