@@ -12,6 +12,7 @@ if [ -z "$TENANT_ID" ]; then
   exit 1
 fi
 export CG_TENANT_ID="$TENANT_ID"
+export CG_PILOT_RUN_ID="${CG_PILOT_RUN_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 
 echo "=== CyberGuardian Synthetic Dry-Run ==="
 python3 - <<'PY'
@@ -37,6 +38,7 @@ def call(label, path, method="GET", payload=None):
     headers = {
         "X-API-Key": key,
         "X-Tenant-ID": os.environ.get("CG_TENANT_ID", "default"),
+        "X-CG-Pilot-Run-ID": os.environ.get("CG_PILOT_RUN_ID", ""),
         "Accept": "application/json",
     }
     if body is not None:
