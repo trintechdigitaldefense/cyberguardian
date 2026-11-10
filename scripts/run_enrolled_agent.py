@@ -27,7 +27,7 @@ def _validate_api_url(value: str) -> str:
         or parsed.password
         or parsed.query
         or parsed.fragment
-        or any(ch in str(value) for ch in "\\r\\n\\t")
+        or any(ch in str(value) for ch in "\r\n\t")
     ):
         raise ValueError("controller URL must be absolute HTTP(S) without credentials, query or fragment")
     if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
