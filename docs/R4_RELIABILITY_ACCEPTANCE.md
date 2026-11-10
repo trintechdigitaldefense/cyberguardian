@@ -12,7 +12,7 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 |---|---|---|
 | Offline queue | JSONL queue with advisory locking, atomic replace, fsync, owner-only files, record/byte caps, overflow rejection preserving older pending events, content dedupe, ack-only removal, exponential retry, bounded flush, corrupt-record retention. Queue callbacks pass the stable queue record ID to the controller. | `tests/test_offline_queue.py` covers atomic-replace/fsync fault injection, process restart, partial acknowledgement, concurrent enqueue/flush and stable record IDs. A real network-partition/reconnect drill and Android/Termux filesystem validation remain. |
 | Audit durability | SQLite audit index plus append-only JSONL hash chain, serialized append, fsync, chain verification, fail-closed extension, signed HMAC checkpoint export/verify and atomic restore helper. | `tests/test_audit_ledger.py` and `tests/test_audit_checkpoint_cli.py` cover tampering, truncated/partial append, concurrent writers, signed checkpoint verification, wrong-key rejection and clean-path restore. A restore drill on a separately provisioned instance and independent off-host immutable storage remain. |
-| Issue memory | Locked atomic JSONL store, bounded active/archive retention, fail-closed malformed-record handling, tenant-bound fingerprints, verified request tenant context and object-level update authorization. | `tests/test_issue_memory.py` covers concurrent writers, archive capacity, tenant-separated identical findings, cross-tenant update denial and missing production tenant context. Archive export/restore and an approved retention schedule remain. |
+| Issue memory | Locked atomic JSONL store, bounded active/archive retention, fail-closed malformed-record handling, tenant-bound fingerprints, verified request tenant context, object-level update authorization, tenant-only archive export and idempotent restore. | `tests/test_issue_memory.py` covers concurrent writers, archive capacity, tenant-separated findings, cross-tenant update denial, malformed/truncated input, private export permissions, overwrite/symlink refusal and idempotent restore. A formally approved retention schedule remains. |
 | Fleet lifecycle | Tenant-filtered fleet response projects stale last-seen agents to offline, unknown timestamps to unknown, and preserves revoked/disabled states; configurable `CG_AGENT_STALE_AFTER_SECONDS` | `tests/test_fleet_lifecycle.py` and tenant-scoped API-level assertions in `tests/test_service_auth_scopes.py`; [run 42871748997](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42871748997) passed the stale/offline projection and tenant isolation tests. Signed registration heartbeat/reconnect now verifies last_seen refresh without duplicate inventory rows; cross-tenant registration is rejected; revoked credentials are rejected and the enrollment CLI can re-enroll the same asset with fresh API, identity and command secrets. Tests: `tests/test_agent_api_integration.py`, `tests/test_agent_enrollment.py`. Longer-lived multi-agent Compose lifecycle transitions and a physical reconnect exercise remain. |
 | Client reports | Tenant-explicit weekly/scorecard fetch, mismatch/missing-source rejection, escaped PDF fields, tenant-bound PDF/CSV, atomic private output and formula-safe CSV cells. | `tests/test_weekly_client_report.py` covers tenant mismatch, missing tenant, generated PDF signature, output permissions and CSV injection. Live Compose authorization, source-record provenance and repeatable date-window evidence remain. |
 | End-to-end workflow | R1/R2/R3 provide signed agent delivery, human gate, containment and operator audit foundations; gateway now stores idempotency responses transactionally for agent detection and command-result endpoints. | Integration tests exercise signed registration/reconnect, tenant-bound command polling, signed command-result reporting, replay response caching, and credential revocation. A single live Compose test covering detect → decision → stage → operator approve/reject → signed delivery → safe execution → correlated audit → tenant report is still outstanding. |
@@ -21,7 +21,7 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 
 - The offline queue remains at-least-once transport. The gateway persists replay responses for `POST /v1/detections` and `POST /v1/agent/command-result`, keyed by tenant, asset, event digest, method and path; the endpoint's SQLite work and replay record share one transaction. Do not describe the entire distributed workflow as exactly-once: external audit-ledger writes and non-idempotent endpoints still require separate recovery/duplicate analysis.
 - The local audit hash chain detects edits/truncation and accidental corruption, but a privileged attacker able to replace both application and ledger can rewrite it. Export signed checkpoints to an independently administered append-only destination.
-- The issue-memory store has a bounded 2,000-record active set and a bounded append-only archive. A formally approved retention schedule and operator-facing archive export/restore workflow remain open.
+- The issue-memory store has a bounded 2,000-record active set and a bounded append-only archive. The new `scripts/issue_archive.py` exports one tenant's archive to a private JSONL snapshot and restores only matching-tenant records without overwriting conflicting history. A formally approved retention schedule remains open.
 - CI uses disposable runners and test data. It does not simulate physical power loss, damaged flash media, Android/Termux filesystem behavior, or real network partitions.
 - Keep Client Mode enabled and all disruptive actions explicitly human-approved during pilot validation.
 
@@ -47,6 +47,26 @@ Commit `ef1cc1efa3c1a0f408320c092568fc3681281ad8` moved the HTTP callback out of
 
 The queue intentionally retains at-least-once transport semantics. For the two agent event endpoints above, the controller returns the stored response for a matching replay, preventing the corresponding SQLite business transaction from running twice. A crash can still repeat effects outside that transaction; keep the claim scoped to the protected endpoint transaction, not the entire workflow.
 
+
+## Tenant-scoped issue archive export and restore
+
+Export one tenant's archived issue history to a new private JSONL snapshot. The command refuses to overwrite an existing destination and reports a SHA-256 digest:
+
+```bash
+python3 scripts/issue_archive.py export \
+  --tenant-id client-a \
+  --out /secure-independent-volume/client-a-issues.jsonl
+```
+
+Restore the snapshot by merging records into the configured archive. The restore requires an explicit matching tenant, rejects truncated or cross-tenant records, preserves conflicting existing history, and is safe to repeat:
+
+```bash
+python3 scripts/issue_archive.py restore \
+  --tenant-id client-a \
+  --input /secure-independent-volume/client-a-issues.jsonl
+```
+
+Protect the snapshot and its destination directory as client data. The digest is an integrity aid, not a digital signature; store the snapshot and digest under the client's approved backup controls. An approved retention schedule is still required before production archival rotation.
 
 ## Signed audit checkpoint workflow
 
