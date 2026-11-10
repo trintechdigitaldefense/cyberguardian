@@ -143,6 +143,15 @@ CG_DATA_DIR=/path/to/persistent/cyberguardian-data \
 
 The command reports the record count and current chain head and exits non-zero if a record is truncated, altered, or out of sequence. Run it after restore and as part of regular audit review. Include the ledger and its lock file in protected backups.
 
+Export a consistent, integrity-verified snapshot to a protected destination:
+
+```bash
+CG_DATA_DIR=/path/to/persistent/cyberguardian-data \\
+  python3 scripts/export_audit_ledger.py --out /path/to/encrypted-export/audit-ledger.jsonl
+```
+
+The export prints a manifest containing the record count, chain head, byte count and SHA-256 digest. The destination is created atomically with owner-only permissions. Transfer the export to independently administered immutable storage/SIEM using your organization's approved secure process.
+
 **Integrity limitation:** a local hash chain detects accidental corruption and unauthorized edits that do not also rewrite the chain. It is not a defense against a privileged attacker who can replace the ledger and application code. For stronger assurance, periodically export signed checkpoints or the ledger itself to an independently administered, append-only remote log/SIEM. Retention, remote export and external checkpoint signing remain R4 work.
 
 ## 8. Operational security checks
