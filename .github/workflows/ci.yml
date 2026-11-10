@@ -54,6 +54,69 @@ jobs:
         if: always()
         run: docker rm -f cg-api || true
 
+  compose-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot isolated production-mode Compose stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATA_DIR="$(mktemp -d)"
+          PROJECT="cg-compose-ci"
+          cleanup() {
+            (cd deploy/docker && docker compose -p "$PROJECT" down --volumes --remove-orphans) || true
+            rm -rf "$DATA_DIR"
+          }
+          trap cleanup EXIT
+          export CG_DATA_HOST_DIR="$DATA_DIR"
+          export CG_PRODUCTION=1
+          export CG_REQUIRE_AGENT_IDENTITY=1
+          export CG_COOKIE_SECURE=1
+          export CG_TRUSTED_PROXY_IPS=""
+          export CG_ALLOWED_ORIGINS="https://testserver"
+          export CYBERGUARDIAN_API_KEY="admin-$(openssl rand -hex 32)"
+          export CG_DASHBOARD_API_KEY="dashboard-$(openssl rand -hex 32)"
+          export CG_NAD_API_KEY="nad-$(openssl rand -hex 32)"
+          export CG_OPERATOR_ASSERTION_SECRET="$(openssl rand -hex 32)"
+          export DECISION_SERVICE_API_KEY="decision-$(openssl rand -hex 32)"
+          python3 - "$DATA_DIR" "$CYBERGUARDIAN_API_KEY" <<'PY'
+          import base64, hashlib, json, secrets, sys
+          from pathlib import Path
+          data = Path(sys.argv[1])
+          password = "Compose-CI-Integration-Password-2026!"
+          salt = secrets.token_bytes(16)
+          rounds = 310_000
+          digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
+          encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+          record = {
+              "admin_user": "compose-ci-admin",
+              "admin_password_hash": f"pbkdf2_sha256${rounds}${encode(salt)}${encode(digest)}",
+              "api_key": sys.argv[2],
+              "agent_api_key": "compose-agent-" + secrets.token_urlsafe(24),
+          }
+          target = data / "credentials.json"
+          target.write_text(json.dumps(record), encoding="utf-8")
+          target.chmod(0o600)
+          PY
+          cd deploy/docker
+          docker compose -p "$PROJECT" up -d --build
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:8080/health >/dev/null \
+              && curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:3000/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            docker compose -p "$PROJECT" ps
+            docker compose -p "$PROJECT" logs --no-color
+            exit 1
+          fi
+          docker compose -p "$PROJECT" exec -T api python -c "import urllib.request; assert urllib.request.urlopen('http://decision-service:8001/health', timeout=5).status == 200; assert urllib.request.urlopen('http://nad-processor:8002/health', timeout=5).status == 200"
+          docker compose -p "$PROJECT" ps
   containment-integration:
     runs-on: ubuntu-latest
     steps:
