@@ -199,3 +199,46 @@ def test_audit_ledger_partial_write_fails_closed_on_next_append(tmp_path, monkey
         pass
     else:
         raise AssertionError("append must fail closed after a partial ledger record")
+
+
+
+def test_ledger_rejects_symlinked_file_and_lock(tmp_path):
+    target = tmp_path / "target.jsonl"
+    target.write_text("", encoding="utf-8")
+    linked_ledger = tmp_path / "linked.jsonl"
+    linked_ledger.symlink_to(target)
+    try:
+        ledger.append_event(linked_ledger, {"event": "must-not-write"})
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked audit ledger must be rejected")
+    assert target.read_text(encoding="utf-8") == ""
+
+    ledger_path = tmp_path / "audit.jsonl"
+    lock_target = tmp_path / "lock-target"
+    lock_target.write_text("untouched", encoding="utf-8")
+    (tmp_path / "audit.jsonl.lock").symlink_to(lock_target)
+    try:
+        ledger.verify_ledger(ledger_path)
+    except PermissionError as exc:
+        assert "lock" in str(exc)
+    else:
+        raise AssertionError("symlinked audit lock must be rejected")
+    assert lock_target.read_text(encoding="utf-8") == "untouched"
+
+
+def test_audit_export_rejects_symlinked_destination(tmp_path):
+    source = tmp_path / "source.jsonl"
+    target = tmp_path / "target.jsonl"
+    linked = tmp_path / "linked.jsonl"
+    ledger.append_event(source, {"event": "safe-export"})
+    target.write_text("do-not-overwrite", encoding="utf-8")
+    linked.symlink_to(target)
+    try:
+        ledger.export_verified_ledger(source, linked)
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked export destination must be rejected")
+    assert target.read_text(encoding="utf-8") == "do-not-overwrite"
