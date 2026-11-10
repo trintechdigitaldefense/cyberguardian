@@ -52,7 +52,12 @@ password_hash = "pbkdf2_sha256" + "$" + str(iterations) + "$" + salt_b64 + "$" +
 api_key = input("Admin API key (empty = auto-generate): ").strip()
 if not api_key:
     api_key = "cg_" + secrets.token_urlsafe(32)
-agent_key = existing.get("agent_api_key") or ("cg_agent_" + secrets.token_urlsafe(24))
+if len(api_key.encode("utf-8")) < 32:
+    raise SystemExit("ERROR: administrator API key must be at least 32 bytes; leave it blank to generate one.")
+rotate_agent_key = os.environ.get("CG_ROTATE_BOOTSTRAP_AGENT_KEY", "").strip().lower() in {"1", "true", "yes"}
+agent_key = existing.get("agent_api_key") or ""
+if rotate_agent_key or len(agent_key.encode("utf-8")) < 32 or agent_key == api_key:
+    agent_key = "cg_agent_" + secrets.token_urlsafe(32)
 used = {api_key, agent_key}
 service_credentials = {}
 for field in (
@@ -95,6 +100,8 @@ finally:
 print(f"Saved hashed credentials: {path}")
 print(f"Admin API key (save this): {api_key}")
 print(f"Agent API key (lab bootstrap only; save securely): {agent_key}")
+if rotate_agent_key:
+    print("Legacy bootstrap agent key rotated because CG_ROTATE_BOOTSTRAP_AGENT_KEY was enabled.")
 print("Service credentials (save these for production deployment):")
 print(f"CG_DASHBOARD_API_KEY={service_credentials['dashboard_api_key']}")
 print(f"CG_NAD_API_KEY={service_credentials['nad_api_key']}")
