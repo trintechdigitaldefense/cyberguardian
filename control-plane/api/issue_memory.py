@@ -42,13 +42,11 @@ def _production_mode() -> bool:
     )
 
 
-def _effective_tenant(tenant_id: Optional[str]) -> str:
+def _effective_tenant(tenant_id: Optional[str]) -> Optional[str]:
     value = str(tenant_id or current_tenant_id() or "").strip()
-    if not value:
-        if _production_mode():
-            raise PermissionError("tenant context is required for issue-memory access")
-        return "default"
-    return value
+    if not value and _production_mode():
+        raise PermissionError("tenant context is required for issue-memory access")
+    return value or None
 
 
 class IssueMemoryIntegrityError(RuntimeError):
@@ -210,7 +208,7 @@ def list_archived_issues(
                 raise IssueMemoryIntegrityError(
                     f"invalid issue archive record at line {line_number}"
                 )
-            if not tenant or str(item.get("tenant_id") or "") == tenant:
+            if tenant is None or str(item.get("tenant_id") or "") == tenant:
                 out.append(item)
     return out[-max(0, min(int(limit), MAX_ARCHIVED_ISSUES)):]
 
@@ -232,7 +230,7 @@ def remember_issue(
     playbook_id: str = "",
     tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    tenant = _effective_tenant(tenant_id)
+    tenant = _effective_tenant(tenant_id) or "default"
     with _store_lock():
         tags = tags or []
         fp = fingerprint(title, asset_id, tags, tenant)
@@ -285,7 +283,7 @@ def list_issues(
     except PermissionError:
         return []
     items = _read_all()
-    if tenant:
+    if tenant is not None:
         items = [item for item in items if str(item.get("tenant_id") or "") == tenant]
     items.sort(key=lambda item: item.get("last_seen") or 0, reverse=True)
     if status:
@@ -305,7 +303,7 @@ def update_issue(
         items = _read_all()
         for item in items:
             if item.get("id") == issue_id and (
-                not tenant or str(item.get("tenant_id") or "") == tenant
+                tenant is None or str(item.get("tenant_id") or "") == tenant
             ):
                 item.update({key: value for key, value in fields.items() if value is not None})
                 item["updated_at"] = time.time()
