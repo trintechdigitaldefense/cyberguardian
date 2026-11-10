@@ -85,3 +85,33 @@ def test_short_signing_secret_is_rejected():
         assert "32 bytes" in str(exc)
     else:
         raise AssertionError("weak signing secret must be rejected")
+
+
+
+def test_dashboard_mints_assertion_from_server_session(tmp_path, monkeypatch):
+    dashboard_dir = Path(__file__).resolve().parents[1] / "dashboard"
+    sys.path.insert(0, str(dashboard_dir))
+    try:
+        spec = importlib.util.spec_from_file_location("cg_operator_dashboard_test", dashboard_dir / "main.py")
+        dashboard = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = dashboard
+        spec.loader.exec_module(dashboard)
+    finally:
+        sys.path.remove(str(dashboard_dir))
+    monkeypatch.setattr(dashboard.dashboard_auth, "PRODUCTION", False)
+    monkeypatch.setenv("CG_OPERATOR_ASSERTION_SECRET", SECRET)
+    session = {"username": "alice", "role": "admin", "tenant_id": "tenant-z"}
+    headers = dashboard.operator_headers(session, "POST", "/v1/gate/approve/abc", "tenant-z")
+    assert headers["X-API-Key"] == dashboard.API_KEY
+    assert headers["X-Tenant-ID"] == "tenant-z"
+    assert headers["X-Request-ID"]
+    claims = verify_assertion(
+        headers["X-CG-Operator-Assertion"],
+        secret=SECRET,
+        method="POST",
+        path="/v1/gate/approve/abc",
+        tenant_id="tenant-z",
+        replay_db=tmp_path / "dashboard-replay.sqlite3",
+    )
+    assert claims["sub"] == "alice"
+    assert claims["role"] == "admin"
