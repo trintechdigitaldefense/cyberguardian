@@ -4,6 +4,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+TENANT_ID="${CG_TENANT_ID:-default}"
+if [ -z "$TENANT_ID" ]; then
+  echo "CG_TENANT_ID must identify the tenant for this pilot." >&2
+  exit 1
+fi
+export CG_TENANT_ID="$TENANT_ID"
 
 echo "=============================================="
 echo " CyberGuardian R4 Owner Pilot Smoke Pack"
@@ -51,7 +57,11 @@ if not isinstance(key, str) or not key:
     raise SystemExit("Missing administrator API key in protected credentials file")
 request = urllib.request.Request(
     api + "/v1/pilot/scorecard",
-    headers={"X-API-Key": key, "Accept": "application/json"},
+    headers={
+        "X-API-Key": key,
+        "X-Tenant-ID": os.environ.get("CG_TENANT_ID", "default"),
+        "Accept": "application/json",
+    },
 )
 try:
     with urllib.request.urlopen(request, timeout=8) as response:
