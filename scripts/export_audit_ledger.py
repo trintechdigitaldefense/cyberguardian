@@ -9,6 +9,25 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _checkpoint_key_hex() -> str:
+    raw = os.environ.get("CG_AUDIT_CHECKPOINT_KEY_HEX", "").strip()
+    if raw:
+        return raw
+    data_dir = Path(os.environ.get("CG_DATA_DIR", str(ROOT / "data"))).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = ROOT / data_dir
+    credentials_path = data_dir / "credentials.json"
+    try:
+        payload = json.loads(credentials_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError("set CG_AUDIT_CHECKPOINT_KEY_HEX or provision audit_checkpoint_key_hex in credentials.json") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("credentials file has an invalid schema")
+    return str(payload.get("audit_checkpoint_key_hex") or "").strip()
+
+
 sys.path.insert(0, str(ROOT / "control-plane" / "api"))
 from audit_ledger import LedgerIntegrityError, export_signed_checkpoint
 
@@ -26,7 +45,7 @@ def main() -> int:
             from audit_ledger import export_verified_ledger
             manifest = export_verified_ledger(args.source, args.out)
         else:
-            raw_key = os.environ.get("CG_AUDIT_CHECKPOINT_KEY_HEX", "")
+            raw_key = _checkpoint_key_hex()
             try:
                 key = bytes.fromhex(raw_key)
             except ValueError as exc:
