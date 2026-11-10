@@ -115,7 +115,7 @@ A second implementation slice now separates workload credentials and applies def
 - `deploy/docker/.env.example` now documents independently generated credentials. The dashboard and NAD containers no longer receive the administrator API key.
 - `service_auth.py` contains explicit default-deny scopes, with tests for allowed dashboard actions and denied agent/admin/NAD actions.
 
-**Still not accepted:** the full gateway integration test must prove that these service credentials are actually accepted/rejected at runtime, including a production-mode dashboard assertion and audit write. The API route allowlist must be checked against all UI routes after the route inventory is complete. The shared operator assertion secret remains a symmetric trust key; protect it as a server-only secret and rotate it using the documented deployment process. R3 remains in progress until the remaining acceptance checklist is evidenced.
+**Runtime gateway checks now pass:** production-mode tests verify a dashboard request without an assertion is rejected, a valid session-signed dashboard request is accepted, NAD cannot read fleet data, dashboard credentials cannot access agent command routes, and only an admin/operator dashboard assertion can satisfy gateway admin authorization. The audit start/completion writes execute as part of this tested request path. The API route allowlist still needs a complete comparison against every dashboard route and the full Compose deployment must validate audit persistence across services. The shared operator assertion secret remains a symmetric trust key; protect it as a server-only secret and rotate it using the documented deployment process. R3 remains in progress until the remaining acceptance checklist is evidenced.
 
 
 ## Dashboard browser and login hardening progress (2026-11-10)
@@ -127,3 +127,8 @@ A second implementation slice now separates workload credentials and applies def
 - Login-attempt storage is bounded by `CG_LOGIN_ATTEMPT_MAX_ROWS` (default 10,000) and pruned by the rolling window. Account-level throttling remains independent of source IP.
 
 CI tests cover the external assets/CSP, HTML escaping, trusted-proxy selection, invalid proxy configuration and bounded login-attempt storage. These are code-level checks; the deployment's actual TLS proxy chain and client-IP forwarding must still be verified during the clone-and-test exercise.
+
+
+## Latest CI evidence (2026-11-10)
+
+GitHub Actions run [42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed all five jobs on commit `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`. The matrix covered Python 3.10/3.11/3.12, Docker API build/container smoke, and the disposable network-namespace containment integration. Python 3.11 reported 75 passing tests. This is automated CI evidence, not a full Docker Compose deployment or client-network validation.
