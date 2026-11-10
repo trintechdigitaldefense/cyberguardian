@@ -90,7 +90,7 @@ The dashboard authentication database is stored under `CG_DATA_DIR`; mount that 
 
 ## Service authentication and CORS
 
-Every decision-service `/v1/*` route requires `X-Decision-Service-Key`; in production, a missing key returns 503 and an invalid key returns 401. The gateway's deterministic assembler patch adds the same header to its decision, execute, and action-dispatch requests. The dashboard service key is limited to the documented dashboard routes and requires a request-bound operator assertion in production. The NAD service key is limited to `POST /v1/detections`. Unknown service identities and out-of-scope methods/routes are denied.
+Every decision-service `/v1/*` route requires `X-Decision-Service-Key`; in production, a missing key returns 503 and an invalid key returns 401. The gateway's deterministic assembler patch adds the same header to its decision, execute, and action-dispatch requests. The dashboard service key is limited to the documented dashboard routes and requires a request-bound operator assertion in production. The NAD service key is limited to `POST /v1/detections`; the gateway derives its tenant from the registered asset and rejects a caller-supplied tenant that differs. Unknown service identities and out-of-scope methods/routes are denied.
 
 The API gateway CORS policy is generated from `CG_ALLOWED_ORIGINS`. The assembler rejects an empty origin list or wildcard origin. If the operator dashboard is hosted behind a reverse proxy, configure the exact HTTPS origin and ensure the proxy terminates TLS.
 
