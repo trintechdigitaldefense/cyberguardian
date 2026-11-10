@@ -125,7 +125,8 @@ for src_path in source.rglob("*"):
     else:
         shutil.copy2(src_path, dst_path)
     dst_path.chmod(0o600)
-PY```
+PY
+```
 
 Encrypt and store backups in an access-controlled location. Restore only while the application services are stopped; restore the complete set together, then verify file ownership and restrictive permissions before restarting. Retain the replay-nonce database during restore. If it cannot be restored, keep the gateway offline for at least 65 seconds before accepting dashboard assertions so any previously issued 60-second assertion has expired.
 
