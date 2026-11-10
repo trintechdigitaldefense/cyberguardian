@@ -18,7 +18,8 @@ def test_standalone_startup_passes_distinct_workload_credentials():
 def test_standalone_production_startup_fails_closed_and_binds_loopback():
     source = (ROOT / "start.sh").read_text(encoding="utf-8")
     assert 'BIND_HOST="127.0.0.1"' in source
-    assert "all five production service credentials/secrets must be at least 32 bytes" in source
+    assert "all five production service credentials/secrets must be at least 32 bytes and the audit checkpoint key must be configured" in source
+    assert "audit checkpoint key must contain at least 32 random bytes" in source
     assert "must all be unique" in source
     assert "must match data/credentials.json" in source
     assert "Production identity enforcement is enabled; skipping bootstrap agent." in source
@@ -34,3 +35,5 @@ def test_setup_credentials_generates_unique_service_identities_and_rotation():
     ):
         assert f'"{field}"' in source
     assert "CG_ROTATE_BOOTSTRAP_AGENT_KEY" in source
+    assert "audit_checkpoint_key_hex" in source
+    assert "CG_AUDIT_CHECKPOINT_KEY_HEX" in source
