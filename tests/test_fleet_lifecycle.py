@@ -67,3 +67,32 @@ def test_revoked_and_disabled_states_survive_missing_heartbeat_timestamps():
     assert result[0]["status"] == "revoked"
     assert result[1]["lifecycle"] == "disabled"
     assert result[1]["status"] == "disabled"
+
+
+
+def test_invalid_nonfinite_and_future_heartbeat_timestamps_fail_closed():
+    result = fleet.project_fleet_lifecycle(
+        [
+            {"asset_id": "nan", "status": "online", "last_seen": float("nan")},
+            {"asset_id": "positive-infinity", "status": "online", "last_seen": float("inf")},
+            {"asset_id": "negative-infinity", "status": "online", "last_seen": float("-inf")},
+            {"asset_id": "future", "status": "online", "last_seen": 1061},
+            {"asset_id": "zero", "status": "online", "last_seen": 0},
+        ],
+        now=1000,
+        stale_after_seconds=60,
+    )
+    assert all(item["lifecycle"] == "unknown" for item in result)
+    assert all(item["status"] == "unknown" for item in result)
+    assert all(item["stale"] is True for item in result)
+    assert all(item["last_seen_age_seconds"] is None for item in result)
+
+
+def test_fleet_projection_rejects_invalid_projection_clock():
+    for now in (float("nan"), float("inf"), 0, -1):
+        try:
+            fleet.project_fleet_lifecycle([], now=now)
+        except ValueError as exc:
+            assert "finite positive" in str(exc)
+        else:
+            raise AssertionError("invalid projection clock must be rejected")
