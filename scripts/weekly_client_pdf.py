@@ -81,6 +81,8 @@ def build_pdf(
         raise RuntimeError("ReportLab is required to generate a client PDF; install dashboard/report dependencies") from exc
 
     out = Path(out)
+    if not str(tenant_id).strip() or str(scorecard.get("tenant_id") or "") != str(tenant_id):
+        raise RuntimeError("PDF export tenant identity is missing or does not match")
     _ensure_private_output_dir(out.parent)
     fd, temp_name = tempfile.mkstemp(prefix=out.name + ".", suffix=".tmp", dir=str(out.parent))
     os.close(fd)
