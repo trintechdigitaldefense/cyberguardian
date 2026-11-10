@@ -95,6 +95,27 @@ async def _validate_workload_credentials():
     if len(set(values)) != len(values):
         raise RuntimeError("administrator, workload, decision-service and operator secrets must all be unique")
 
+    credentials_path = Path(getattr(_mod, "CREDS_PATH", Path("data") / "credentials.json"))
+    try:
+        stored_credentials = json.loads(credentials_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RuntimeError("production audit checkpoint credentials are unavailable") from exc
+    if not isinstance(stored_credentials, dict):
+        raise RuntimeError("production credentials file has an invalid schema")
+    audit_key_hex = str(
+        os.environ.get("CG_AUDIT_CHECKPOINT_KEY_HEX")
+        or stored_credentials.get("audit_checkpoint_key_hex")
+        or ""
+    ).strip()
+    try:
+        audit_key = bytes.fromhex(audit_key_hex)
+    except ValueError as exc:
+        raise RuntimeError("production audit checkpoint key must be hexadecimal") from exc
+    if len(audit_key) < 32:
+        raise RuntimeError("production audit checkpoint key must contain at least 32 random bytes")
+    if audit_key in {value.encode("utf-8") for value in values}:
+        raise RuntimeError("production audit checkpoint key must be distinct from workload credentials")
+
 # Dashboard operator assertions are verified at the gateway boundary. Agent
 # credentials are handled by the existing asset-scoped middleware below.
 import operator_context as _operator_context
