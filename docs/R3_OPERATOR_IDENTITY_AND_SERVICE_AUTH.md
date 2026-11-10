@@ -132,3 +132,12 @@ CI tests cover the external assets/CSP, HTML escaping, trusted-proxy selection, 
 ## Latest CI evidence (2026-11-10)
 
 GitHub Actions run [42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed all five jobs on commit `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`. The matrix covered Python 3.10/3.11/3.12, Docker API build/container smoke, and the disposable network-namespace containment integration. Python 3.11 reported 75 passing tests. This is automated CI evidence, not a full Docker Compose deployment or client-network validation.
+
+
+## R3 operator onboarding and production operations
+
+The tenant-scoped user provisioning CLI is available at `scripts/manage_dashboard_user.py`, with its implementation in `dashboard/user_admin.py`. It supports the explicit roles `admin`, `operator`, `analyst` and `viewer`; passwords are prompted interactively, PBKDF2-hashed and atomically written to the credential store. Duplicate users require an explicit `--replace`. Tests cover password hashing, tenant/role persistence, file mode and invalid role/duplicate rejection.
+
+See [R3 production operations](R3_PRODUCTION_OPERATIONS.md) for independent secret generation, first-run setup, operator onboarding, secret rotation, TLS reverse-proxy requirements, trusted proxy configuration, and consistent backup/restore of the persistent data directory.
+
+R3 production-mode Compose acceptance is now part of CI. Latest completed six-job run [42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed on commit `1565851b4675591ef226b6d61078b332a6aead90`, including Python 3.10/3.11/3.12, Docker API smoke, disposable containment integration and the full production-mode Compose stack. R3 is accepted for the engineering roadmap; proceed to R4 on the security branch. This does not certify a client network or replace the R5 soak/pilot gates.
