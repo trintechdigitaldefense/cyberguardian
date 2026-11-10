@@ -7,7 +7,7 @@ import httpx, os
 
 app = FastAPI(title="CyberGuardian NAD", version="1.0.0-detect")
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
-API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
+API_KEY = os.getenv("CG_NAD_API_KEY", "")
 
 class SimulatedAnomaly(BaseModel):
     asset_id: str
