@@ -31,7 +31,7 @@ jobs:
         run: bash -n start.sh status.sh stop.sh scripts/setup_credentials.sh
       - name: Compile application modules
         run: |
-          python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/test_containment_namespace.py
+          python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/run_enrolled_agent.py scripts/export_audit_checkpoint_key.py scripts/weekly_client_pdf.py control-plane/api/issue_memory.py control-plane/api/audit_ledger.py scripts/test_containment_namespace.py
 
   docker-api:
     runs-on: ubuntu-latest
