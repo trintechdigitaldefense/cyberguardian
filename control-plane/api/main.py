@@ -58,6 +58,10 @@ async def _validate_workload_credentials():
         "DECISION_SERVICE_API_KEY",
     )
     values = [os.environ.get(name, "").strip() for name in names]
+    configured_admin = _mod.admin_key()
+    if not configured_admin or not hmac.compare_digest(configured_admin, values[0]):
+        raise RuntimeError("configured administrator API key must match the controller credential store")
+    values[0] = configured_admin
     if any(len(value.encode("utf-8")) < 32 for value in values):
         raise RuntimeError("all production service credentials and signing secrets must be at least 32 bytes")
     if len(set(values)) != len(values):
