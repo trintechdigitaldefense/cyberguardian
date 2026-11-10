@@ -45,6 +45,24 @@ sys.modules["cg_api_main"] = _mod
 _spec.loader.exec_module(_mod)
 app = _mod.app
 
+
+@app.on_event("startup")
+async def _validate_workload_credentials():
+    if not _mod._agent_id.production_mode():
+        return
+    names = (
+        "CYBERGUARDIAN_API_KEY",
+        "CG_DASHBOARD_API_KEY",
+        "CG_NAD_API_KEY",
+        "CG_OPERATOR_ASSERTION_SECRET",
+        "DECISION_SERVICE_API_KEY",
+    )
+    values = [os.environ.get(name, "").strip() for name in names]
+    if any(len(value.encode("utf-8")) < 32 for value in values):
+        raise RuntimeError("all production service credentials and signing secrets must be at least 32 bytes")
+    if len(set(values)) != len(values):
+        raise RuntimeError("administrator, workload, decision-service and operator secrets must all be unique")
+
 # Dashboard operator assertions are verified at the gateway boundary. Agent
 # credentials are handled by the existing asset-scoped middleware below.
 import operator_context as _operator_context
