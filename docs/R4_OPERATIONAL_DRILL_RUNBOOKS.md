@@ -143,3 +143,13 @@ For each drill, retain a dated evidence bundle containing:
 - Explicit statement of which physical/independent controls were actually exercised.
 
 Do not include credentials, HMAC keys, client personal data or unredacted secrets in the evidence bundle or Git repository.
+
+
+
+## Historical reporting implementation notes
+
+The reporting route now reads `GET /v1/audit/history` from the verified append-only audit ledger rather than using `/v1/audit?limit=100`. The API requires authenticated request-bound operator context and tenant identity. It uses UTC timestamps and a half-open `[start, end)` period (inclusive start, exclusive end), pages at 500 records, and pins pages to a single verified ledger hash. Historical records without a trustworthy tenant attribution are excluded. The PDF includes each included source event ID and the checkpoint head.
+
+The report's historical section is limited to audit activity in the selected interval. Risk, fleet, approval-queue and remembered-issue figures remain a current snapshot at report generation time; the weekly digest remains the gateway's existing recent summary. The report must not be described as a historical time-series of every dashboard metric.
+
+The repository also includes loopback HTTP outage/reconnect and two-separate-agent queue tests. These exercise real TCP connection failure and recovery with synthetic data in CI. They are useful automated evidence but do not replace the required physical agent network-partition/restart/reconnect drill on the intended deployment environment.
