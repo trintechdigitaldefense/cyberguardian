@@ -65,17 +65,16 @@ def test_populated_valid_ledger_requires_all_events_for_same_pilot_run(tmp_path,
     main, data_dir, _ = _load_gateway(tmp_path, monkeypatch)
     run_id = str(uuid.uuid4())
     for event in sorted(REQUIRED_EVENTS):
-        main._mod.write_audit(
-            event=event,
-            action="POST",
-            target="/pilot/test",
-            actor="test-operator",
-            detail=json.dumps({
-                "pilot_run_id": run_id,
-                "tenant_id": "tenant-a",
-                "result_status": "ok",
-            }, sort_keys=True),
-            result_ok=1,
+        main._audit_ledger.append_event(
+            main._AUDIT_LEDGER_PATH,
+            {"fields": {
+                "event": event,
+                "detail": json.dumps({
+                    "pilot_run_id": run_id,
+                    "tenant_id": "tenant-a",
+                    "result_status": "ok",
+                }, sort_keys=True),
+            }},
         )
 
     verified = main._audit_ledger.verify_ledger(main._AUDIT_LEDGER_PATH)
