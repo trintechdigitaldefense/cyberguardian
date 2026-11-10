@@ -31,7 +31,7 @@ jobs:
         run: bash -n start.sh status.sh stop.sh scripts/setup_credentials.sh
       - name: Compile application modules
         run: |
-          python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/run_enrolled_agent.py scripts/export_audit_checkpoint_key.py scripts/weekly_client_pdf.py scripts/issue_archive.py control-plane/api/issue_memory.py control-plane/api/audit_ledger.py scripts/test_containment_namespace.py
+          python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/run_enrolled_agent.py scripts/export_audit_checkpoint_key.py scripts/weekly_client_pdf.py scripts/issue_archive.py scripts/test_r4_supervised_workflow.py control-plane/api/issue_memory.py control-plane/api/audit_ledger.py scripts/test_containment_namespace.py
 
   docker-api:
     runs-on: ubuntu-latest
@@ -224,6 +224,33 @@ jobs:
           docker compose -p "$PROJECT" exec -T dashboard python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_NAD_API_KEY' not in os.environ"
           docker compose -p "$PROJECT" exec -T nad-processor python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_DASHBOARD_API_KEY' not in os.environ"
           docker compose -p "$PROJECT" ps
+          docker compose -p "$PROJECT" exec -T api python - <<'PY' > "$DATA_DIR/compose-agent-credential.json"
+          import json
+          import agent_credentials
+          print(json.dumps(agent_credentials.get_agent_credential("compose-host")))
+          PY
+          chmod 600 "$DATA_DIR/compose-agent-credential.json"
+          docker compose -p "$PROJECT" exec -T api python - <<'PY'
+          import main
+          result = main._mod.queue_agent_command(
+              asset_id="compose-host",
+              action="escalate",
+              target="compose-host",
+              parameters={"reason": "R4 CI safe non-disruptive execution"},
+              pending_action_id="r4-ci-safe-escalate",
+              ttl_seconds=300,
+          )
+          with main._mod.db() as conn:
+              row = conn.execute(
+                  "SELECT id, asset_id, action, status, pending_action_id "
+                  "FROM agent_commands WHERE pending_action_id=?",
+                  ("r4-ci-safe-escalate",),
+              ).fetchone()
+          assert row is not None, {"queue_result": result, "detail": "safe CI command was not persisted"}
+          assert row["status"] == "queued", dict(row)
+          print("R4 safe command persisted:", dict(row))
+          PY
+          CG_AGENT_TEST_CREDENTIAL_FILE="$DATA_DIR/compose-agent-credential.json" python3 "$ROOT/scripts/test_r4_supervised_workflow.py"
   containment-integration:
     runs-on: ubuntu-latest
     steps:
