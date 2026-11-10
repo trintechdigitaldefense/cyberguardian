@@ -62,10 +62,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE"
           DATA_DIR="$(mktemp -d)"
           PROJECT="cg-compose-ci"
           cleanup() {
-            (cd deploy/docker && docker compose -p "$PROJECT" down --volumes --remove-orphans) || true
+            (cd "$ROOT/deploy/docker" && docker compose -p "$PROJECT" down --volumes --remove-orphans) || true
             rm -rf "$DATA_DIR"
           }
           trap cleanup EXIT
