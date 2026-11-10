@@ -60,6 +60,11 @@ python scripts/export_audit_ledger.py --out /secure-independent-volume/cyberguar
 
 # Verify the manifest signature, snapshot digest, record count and hash chain.
 python scripts/verify_audit_checkpoint.py --snapshot /secure-independent-volume/cyberguardian-audit.jsonl
+
+# Restore to a clean instance's separate data path; existing files are protected.
+python scripts/restore_audit_checkpoint.py \
+  --snapshot /secure-independent-volume/cyberguardian-audit.jsonl \
+  --destination /srv/cyberguardian-restore/audit_ledger.jsonl
 ```
 
 The checkpoint uses HMAC-SHA256 (shared-key authentication), not a public-key signature. Keep the key and exported snapshot under independent administrative control. A restore drill must copy the snapshot into a clean test data directory, verify it with the key, and confirm that the gateway can read/continue the restored audit history without weakening fail-closed corruption checks.
@@ -72,3 +77,6 @@ Fleet transition regression coverage passed in [run 42874048743](https://github.
 
 
 Issue archival regression tests: `tests/test_issue_memory.py` verifies that active-store eviction preserves the complete set of records in the archive, archive files are owner-only, and a full archive rejects new records without dropping the active issue. Full CI run [42874401950](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42874401950) passed all six jobs on `c1f2b871b955baa4823c009b9619fe294d30005b`.
+
+
+A clean-instance restore helper is available as `scripts/restore_audit_checkpoint.py`. It verifies the HMAC manifest, snapshot digest, record count and chain before writing a separate destination atomically. It refuses an existing destination unless `--replace` is explicitly supplied. The test suite exercises the API and CLI restore paths; operational restore to an independently administered host is still required.
