@@ -68,6 +68,16 @@
     <div class="row"><button type="button" class="ghost" data-action="load-fleet">Refresh Fleet</button></div>
     <div id="fleet-table"><p class="hint">No agents registered yet.</p></div>
   </section>
+
+  <section id="client-reporting">
+    <h2>Client PDF Reporting Centre</h2>
+    <p class="hint">Create a professional report from the current client-scoped monitoring data, recent activity and weekly digest. Technical terms are explained in everyday language.</p>
+    <div class="row">
+      <button type="button" class="ok" data-action="download-client-report">Generate &amp; download client PDF</button>
+      <span id="client-report-status" class="meta" role="status">Ready when monitoring sources are online.</span>
+    </div>
+    <p class="hint">The report is generated on demand. If a required monitoring source is unavailable or the client identity cannot be confirmed, report generation stops rather than producing an incomplete or cross-client report.</p>
+  </section>
   <section>
     <h2>Weekly Digest</h2>
     <p class="hint">Plain-language 7-day summary for operators.</p>
