@@ -3,9 +3,9 @@
 **Repository:** https://github.com/trintechdigitaldefense/cyberguardian  
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
-**Roadmap status reviewed:** 2026-11-08  
-**Latest branch commit:** `30e657bea4c419bf0d8d6f2900a5f4d1eb257df9` (R3 security design baseline; CI pending).  
-**Latest completed CI:** [run 42518629698](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518629698) — all five jobs passed on commit `268cdeee3909be07bcaba3209a57f4ca52be59ac`: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration (nftables + iptables in disposable network namespaces).  
+**Roadmap status reviewed:** 2026-11-10  
+**Latest branch commit:** `0c14d9326b5edd63cc1fa8f438ec444ebc5302d2` (R3 operator assertion syntax fix; CI run [42861098018](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42861098018) in progress at review).  
+**Latest completed full CI baseline:** [run 42519663706](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42519663706) passed on `b3b893b120609caf3791d3849e79d2fcb03ba685`. The new R3 assertion implementation is being validated by run [42861098018](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42861098018); Python 3.11 reports 68 tests passed and compile checks passed, while the full workflow was still running.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
@@ -87,7 +87,7 @@ Remaining environment-specific validation is part of R5: repeat the supervised c
 
 ### R3 — Complete operator and service security (IN PROGRESS)
 
-**Latest completed code CI:** [run 42517900655](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42517900655) — 62 tests passed on Python 3.10/3.11/3.12; Docker API smoke and both containment integration jobs passed. The latest completed full workflow on the branch is [run 42518629698](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42518629698), passing all five jobs on `268cdeee3909be07bcaba3209a57f4ca52be59ac`.
+**Latest R3 implementation validation:** run [42861098018](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42861098018) is validating commit `0c14d9326b5edd63cc1fa8f438ec444ebc5302d2`; Python 3.11 has 68 tests passing and compile checks passing. Docker API smoke, Python 3.10/3.12 and containment jobs were still in progress at this update.
 
 Implemented and covered so far:
 - Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
@@ -100,10 +100,10 @@ Implemented and covered so far:
 - Compose keeps decision service on the private Docker network, binds API/dashboard host ports to localhost, and requires deployment secrets. A safe .env.example and deployment guidance are committed.
 - R3 tests now cover login/session/CSRF/role flows, service-key rejection, fail-closed configuration, CORS patch behaviour and source-drift failures.
 
-Operator identity and service authorization design baseline: [docs/R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md](R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md). This is a specification only; implementation and acceptance tests are not yet complete.
+Operator identity and service authorization design plus implementation progress: [docs/R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md](R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md). The first signed-assertion implementation slice is now pushed; full implementation and acceptance are not complete.
 
 Still required before R3 can be marked complete:
-1. Implement signed operator identity assertions and bind verified identity to gateway audit events for dashboard actions. The dashboard currently authenticates the operator locally but sends a shared gateway API key; audit records must preserve the authenticated username, role, tenant, action, approval and command correlation without trusting client-supplied actor headers.
+1. Complete and validate signed operator identity assertions. Initial code now mints assertions from the dashboard's server-side session, verifies HMAC/freshness/nonce/method/path/tenant at the gateway in production, and adds verified subject/role/tenant/request ID to gateway audit writes. Automated tests cover signature tampering, expiry, replay, request binding, weak secrets and dashboard signing. Remaining: prove the gateway middleware/audit schema in integration, add approval/command correlation, and ensure every dashboard route is covered.
 2. Enforce least privilege end-to-end. Define service identities/scopes for dashboard, NAD processor, API gateway and decision service; avoid giving dashboard a general admin API key. Add negative tests proving each service cannot call unrelated admin/agent endpoints.
 3. Audit every dashboard route and frontend action: ensure every state-changing operation requires CSRF and correct role, and every API proxy call carries the authenticated tenant. Add cross-tenant isolation tests, including object-ID substitution and audit/report endpoints.
 4. Review login throttling against reverse-proxy deployments. Trust forwarded client IP only from configured trusted proxies; add a global/account-only throttle resilient to rotating source IPs and a bounded cleanup/retention strategy for the attempts table.
@@ -132,7 +132,7 @@ Do not call R3 complete based on the current passing CI alone. The current evide
 
 ## Immediate work order
 
-R0, R1 and R2 code gates are complete on the security branch. R3 is underway: its first dashboard/service-auth controls and 62-test CI baseline are on the branch, but operator attribution, service least privilege, proxy-aware throttling, CSP hardening and full Compose acceptance remain. Continue R3 before starting R4. Keep the security branch isolated from `main`.
+R0, R1 and R2 code gates are complete on the security branch. R3 is underway: signed operator assertions and audit-context propagation are now implemented as an initial slice, with CI validation in progress. Service least privilege, full operator/audit integration coverage, cross-tenant tests, proxy-aware throttling, CSP hardening and full Compose acceptance remain. Continue R3 before starting R4. Keep the security branch isolated from `main`.
 
 ## GitHub delivery rules
 
