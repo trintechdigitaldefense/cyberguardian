@@ -52,7 +52,14 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         "command_secret": "command-secret-host-a",
         "status": "active",
     }
-    agent_credentials.write_agent_credentials({"host-a": record})
+    record_b = {
+        "tenant_id": "tenant-b",
+        "api_key": "agent-key-host-b",
+        "identity_secret": "identity-secret-host-b",
+        "command_secret": "command-secret-host-b",
+        "status": "active",
+    }
+    agent_credentials.write_agent_credentials({"host-a": record, "host-b": record_b})
 
     fingerprint = agent_identity.host_fingerprint("host-a", "linux-test", "machine-a")
     identity_ts = time.time()
@@ -107,6 +114,26 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             },
         )
         assert registered.status_code == 200, registered.text
+
+        fingerprint_b = agent_identity.host_fingerprint("host-b", "linux-test", "machine-b")
+        identity_ts_b = time.time()
+        identity_sig_b = agent_identity.sign_registration("host-b", fingerprint_b, identity_ts_b)
+        headers_b = {"X-API-Key": record_b["api_key"], "X-Tenant-ID": "tenant-b"}
+        registered_b = client.post(
+            "/v1/assets/register",
+            headers=headers_b,
+            json={
+                "asset_id": "host-b",
+                "tenant_id": "tenant-b",
+                "hostname": "host-b",
+                "os": "linux-test",
+                "machine_id": "machine-b",
+                "fingerprint": fingerprint_b,
+                "identity_ts": identity_ts_b,
+                "identity_sig": identity_sig_b,
+            },
+        )
+        assert registered_b.status_code == 200, registered_b.text
 
         # The shared NAD service key may submit detections only for the
         # tenant bound to the registered asset, never a caller-selected tenant.
@@ -232,6 +259,35 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             expected_tenant_id="tenant-a",
         )
         assert ok, reason
+
+        main._mod.queue_agent_command(
+            asset_id="host-b",
+            action="kill_process",
+            target="9876",
+            parameters={"pid": 9876},
+            pending_action_id="approval-b",
+            ttl_seconds=300,
+        )
+        isolated_poll = client.get(
+            "/v1/agent/commands?asset_id=host-b",
+            headers=headers_b,
+        )
+        assert isolated_poll.status_code == 200, isolated_poll.text
+        isolated_payload = isolated_poll.json()
+        assert isolated_payload["count"] == 1
+        isolated_command = isolated_payload["commands"][0]
+        ok_b, reason_b = verify_command(
+            isolated_command,
+            record_b["command_secret"],
+            expected_asset_id="host-b",
+            expected_tenant_id="tenant-b",
+        )
+        assert ok_b, reason_b
+        cross_tenant_poll = client.get(
+            "/v1/agent/commands?asset_id=host-b",
+            headers=headers,
+        )
+        assert cross_tenant_poll.status_code == 403
 
         wrong_tenant = client.get(
             "/v1/agent/commands?asset_id=host-a",
