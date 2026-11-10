@@ -493,7 +493,7 @@ def restore_archived_issues(source: Path, tenant_id: str) -> Dict[str, Any]:
     imported: List[Dict[str, Any]] = []
     with source.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
-            if not line.endswith("\\n"):
+            if not line.endswith("\n"):
                 raise IssueMemoryIntegrityError(
                     f"truncated issue archive export at line {line_number}"
                 )
