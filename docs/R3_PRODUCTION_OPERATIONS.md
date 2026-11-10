@@ -159,12 +159,12 @@ The export prints a manifest containing the record count, chain head, byte count
 Set the API key and tenant explicitly. The script refuses to generate a report without a tenant or when either the weekly report or scorecard source is unavailable.
 
 ```bash
-CYBERGUARDIAN_API=http://127.0.0.1:8080 \\
-CYBERGUARDIAN_API_KEY="$CYBERGUARDIAN_API_KEY" \\
-CYBERGUARDIAN_TENANT="client-a" \\
-python3 scripts/weekly_client_pdf.py \\
-  --client "Client A" \\
-  --out ./reports/client-a-weekly.pdf \\
+CYBERGUARDIAN_API=http://127.0.0.1:8080 \
+CYBERGUARDIAN_API_KEY="$CYBERGUARDIAN_API_KEY" \
+CYBERGUARDIAN_TENANT="client-a" \
+python3 scripts/weekly_client_pdf.py \
+  --client "Client A" \
+  --out ./reports/client-a-weekly.pdf \
   --csv-out ./reports/client-a-scorecard.csv
 ```
 
