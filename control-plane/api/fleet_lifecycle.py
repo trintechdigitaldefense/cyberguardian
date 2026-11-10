@@ -26,10 +26,11 @@ def project_fleet_lifecycle(items: list[dict[str, Any]], *, now: float | None = 
             stale = age > threshold
             item["last_seen_age_seconds"] = age
             item["stale"] = stale
-            item["lifecycle"] = "offline" if stale else "online"
-            if stale:
-                item["status"] = "offline"
-            elif item.get("status") not in {"revoked", "disabled"}:
-                item["status"] = "online"
+            existing = str(item.get("status") or "").lower()
+            if existing in {"revoked", "disabled"}:
+                item["lifecycle"] = existing
+            else:
+                item["lifecycle"] = "offline" if stale else "online"
+                item["status"] = "offline" if stale else "online"
         projected.append(item)
     return projected
