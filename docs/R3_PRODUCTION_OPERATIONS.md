@@ -130,7 +130,22 @@ PY
 
 Encrypt and store backups in an access-controlled location. Restore only while the application services are stopped; restore the complete set together, then verify file ownership and restrictive permissions before restarting. Retain the replay-nonce database during restore. If it cannot be restored, keep the gateway offline for at least 65 seconds before accepting dashboard assertions so any previously issued 60-second assertion has expired.
 
-## 7. Operational security checks
+## 7. Audit ledger integrity and export
+
+Every gateway audit write is also appended to `audit_ledger.jsonl` in the persistent data directory. The ledger is hash-chained, serialized with an advisory lock, written with append + fsync, and stored with owner-only permissions. The gateway refuses to extend a ledger whose existing chain fails verification; audit persistence failure is treated as a failed request rather than silently ignored.
+
+Verify the ledger from the repository root:
+
+```bash
+CG_DATA_DIR=/path/to/persistent/cyberguardian-data \\
+  python3 scripts/verify_audit_ledger.py
+```
+
+The command reports the record count and current chain head and exits non-zero if a record is truncated, altered, or out of sequence. Run it after restore and as part of regular audit review. Include the ledger and its lock file in protected backups.
+
+**Integrity limitation:** a local hash chain detects accidental corruption and unauthorized edits that do not also rewrite the chain. It is not a defense against a privileged attacker who can replace the ledger and application code. For stronger assurance, periodically export signed checkpoints or the ledger itself to an independently administered, append-only remote log/SIEM. Retention, remote export and external checkpoint signing remain R4 work.
+
+## 8. Operational security checks
 
 Before enabling a client tenant:
 
