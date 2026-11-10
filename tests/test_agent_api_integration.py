@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import json
 import sys
 import time
@@ -195,20 +196,47 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         admin_read = client.get("/v1/client-mode", headers=headers)
         assert admin_read.status_code == 403
 
+        command_result_payload = {
+            "command_id": command["id"],
+            "asset_id": "host-a",
+            "action": command["action"],
+            "target": command["target"],
+            "ok": True,
+            "detail": "integration-test-complete",
+            "result": {"test": True},
+        }
+        canonical_event = json.dumps(
+            {
+                "kind": "POST",
+                "path": "/v1/agent/command-result",
+                "payload": command_result_payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        event_id = hashlib.sha256(canonical_event.encode("utf-8")).hexdigest()
+        idempotent_headers = {**headers, "X-CG-Event-ID": event_id}
         reported = client.post(
             "/v1/agent/command-result",
-            headers=headers,
-            json={
-                "command_id": command["id"],
-                "asset_id": "host-a",
-                "action": command["action"],
-                "target": command["target"],
-                "ok": True,
-                "detail": "integration-test-complete",
-                "result": {"test": True},
-            },
+            headers=idempotent_headers,
+            json=command_result_payload,
         )
         assert reported.status_code == 200, reported.text
+        replayed = client.post(
+            "/v1/agent/command-result",
+            headers=idempotent_headers,
+            json=command_result_payload,
+        )
+        assert replayed.status_code == reported.status_code, replayed.text
+        assert replayed.content == reported.content
+        assert replayed.headers.get("x-cg-idempotent-replay") == "true"
+        with main._mod.db() as conn:
+            idempotency_rows = conn.execute(
+                "SELECT COUNT(*) FROM cg_agent_idempotency WHERE tenant_id=? AND asset_id=? AND event_id=?",
+                ("tenant-a", "host-a", event_id),
+            ).fetchone()[0]
+            assert idempotency_rows == 1
 
         revoked_record = dict(record)
         revoked_record["status"] = "revoked"
