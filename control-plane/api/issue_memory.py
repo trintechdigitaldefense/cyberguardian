@@ -424,3 +424,143 @@ def known_auto_actions(issue: Dict[str, Any]) -> List[Dict[str, str]]:
     else:
         actions.append({"action": "alert_only", "target": asset, "reason": "No safe auto action"})
     return actions
+
+
+def export_archived_issues(destination: Path, tenant_id: str) -> Dict[str, Any]:
+    """Write a private, tenant-only snapshot of archived issue history."""
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        raise ValueError("an explicit tenant ID is required for issue archive export")
+    archive = _archive_path()
+    destination = Path(destination)
+    if destination.is_symlink():
+        raise PermissionError("issue archive export destination must not be a symlink")
+    if archive.resolve() == destination.resolve():
+        raise ValueError("issue archive export destination must differ from the live archive")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if destination.parent.is_symlink() or (destination.parent.stat().st_mode & 0o077):
+        raise PermissionError("issue archive export directory must be private (0700)")
+    with _store_lock():
+        if destination.exists():
+            raise FileExistsError(destination)
+        records = list_archived_issues(limit=MAX_ARCHIVED_ISSUES, tenant_id=tenant)
+        encoded = b"".join(
+            json.dumps(item, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\\n"
+            for item in records
+        )
+        fd, temp_name = tempfile.mkstemp(
+            prefix=destination.name + ".", suffix=".tmp", dir=str(destination.parent)
+        )
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, destination)
+            os.chmod(destination, 0o600)
+            dir_fd = os.open(str(destination.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+    return {
+        "tenant_id": tenant,
+        "records": len(records),
+        "bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "destination": str(destination),
+    }
+
+
+def restore_archived_issues(source: Path, tenant_id: str) -> Dict[str, Any]:
+    """Merge a tenant-only archive snapshot without overwriting existing history."""
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        raise ValueError("an explicit tenant ID is required for issue archive restore")
+    source = Path(source)
+    archive = _archive_path()
+    if source.is_symlink():
+        raise PermissionError("issue archive restore source must not be a symlink")
+    if not source.is_file() or source.resolve() == archive.resolve():
+        raise ValueError("issue archive restore source must be a separate regular file")
+
+    imported: List[Dict[str, Any]] = []
+    with source.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.endswith("\\n"):
+                raise IssueMemoryIntegrityError(
+                    f"truncated issue archive export at line {line_number}"
+                )
+            try:
+                item = json.loads(line)
+            except (ValueError, TypeError) as exc:
+                raise IssueMemoryIntegrityError(
+                    f"invalid issue archive export JSON at line {line_number}"
+                ) from exc
+            if (
+                not isinstance(item, dict)
+                or not item.get("id")
+                or not item.get("asset_id")
+                or str(item.get("tenant_id") or "") != tenant
+            ):
+                raise IssueMemoryIntegrityError(
+                    f"issue archive export has an invalid or cross-tenant record at line {line_number}"
+                )
+            imported.append(item)
+            if len(imported) > MAX_ARCHIVED_ISSUES:
+                raise IssueMemoryCapacityError("issue archive export exceeds the configured record cap")
+
+    with _store_lock():
+        existing = []
+        path = _archive_path()
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except (ValueError, TypeError) as exc:
+                        raise IssueMemoryIntegrityError(
+                            f"invalid issue archive JSON at line {line_number}"
+                        ) from exc
+                    if not isinstance(item, dict) or not item.get("id"):
+                        raise IssueMemoryIntegrityError(
+                            f"invalid issue archive record at line {line_number}"
+                        )
+                    existing.append(item)
+
+        by_id = {str(item["id"]): item for item in existing}
+        added = 0
+        skipped = 0
+        for item in imported:
+            issue_id = str(item["id"])
+            prior = by_id.get(issue_id)
+            if prior is not None:
+                if prior != item:
+                    raise IssueMemoryIntegrityError(
+                        f"issue archive ID collision with different content: {issue_id}"
+                    )
+                skipped += 1
+                continue
+            by_id[issue_id] = item
+            added += 1
+
+        merged = list(by_id.values())
+        if len(merged) > MAX_ARCHIVED_ISSUES:
+            raise IssueMemoryCapacityError("restored issue archive would exceed the configured record cap")
+        if added:
+            _write_archive_all(merged)
+
+    return {
+        "tenant_id": tenant,
+        "restored": added,
+        "already_present": skipped,
+        "total_archived": len(merged),
+    }
