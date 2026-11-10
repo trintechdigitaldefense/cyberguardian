@@ -286,7 +286,7 @@ def test_issue_archive_restore_rejects_cross_tenant_and_truncated_exports(tmp_pa
     cross_tenant = tmp_path / "cross-tenant.jsonl"
     cross_tenant.write_text(json.dumps({
         "id": "foreign", "asset_id": "asset-b", "tenant_id": "tenant-b"
-    }) + "\\n", encoding="utf-8")
+    }) + "\n", encoding="utf-8")
     try:
         issue_memory.restore_archived_issues(cross_tenant, "tenant-a")
     except issue_memory.IssueMemoryIntegrityError as exc:
