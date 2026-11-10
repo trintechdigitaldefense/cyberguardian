@@ -73,6 +73,7 @@ def test_csv_export_is_atomic_tenant_scoped_and_formula_safe(tmp_path):
     output = tmp_path / "reports" / "weekly.csv"
     reports.build_csv(
         {
+            "tenant_id": "client-a",
             "status": "pilot",
             "score": 90,
             "checks": [
@@ -90,3 +91,50 @@ def test_csv_export_is_atomic_tenant_scoped_and_formula_safe(tmp_path):
     assert rows[0]["check_label"].startswith("'=")
     assert rows[0]["detail"].startswith("'@")
     assert output.stat().st_mode & 0o777 == 0o600
+
+
+
+def test_scorecard_requires_explicit_matching_tenant():
+    body = json.dumps({"status": "ok"}).encode()
+    with patch.object(reports.urllib.request, "urlopen", lambda request, timeout: FakeResponse(body)):
+        try:
+            reports.fetch_scorecard("http://localhost:8080", "key", "client-a")
+        except RuntimeError as exc:
+            assert "missing its tenant identity" in str(exc)
+        else:
+            raise AssertionError("scorecard without tenant identity must be rejected")
+
+
+def test_pdf_export_is_atomic_private_and_tenant_bound(tmp_path):
+    output = tmp_path / "reports" / "weekly.pdf"
+    scorecard = {
+        "tenant_id": "client-a",
+        "status": "pilot",
+        "score": 90,
+        "checks": [{"label": "API healthy", "ok": True, "detail": "All services healthy"}],
+    }
+    reports.build_pdf(
+        "7-day report summary",
+        scorecard,
+        output,
+        client_name="<Client>",
+        tenant_id="client-a",
+    )
+    assert output.read_bytes().startswith(b"%PDF-")
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.parent.stat().st_mode & 0o777 == 0o700
+    assert not list(output.parent.glob("*.tmp"))
+
+
+def test_pdf_export_rejects_scorecard_for_another_tenant(tmp_path):
+    try:
+        reports.build_pdf(
+            "report",
+            {"tenant_id": "client-b", "checks": []},
+            tmp_path / "reports" / "weekly.pdf",
+            tenant_id="client-a",
+        )
+    except RuntimeError as exc:
+        assert "tenant identity" in str(exc)
+    else:
+        raise AssertionError("cross-tenant PDF export must be rejected")
