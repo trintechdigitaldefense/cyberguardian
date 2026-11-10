@@ -132,3 +132,33 @@ def test_checkpoint_cli_loads_key_from_private_credentials_store(tmp_path):
     )
     assert verified.returncode == 0, verified.stderr
     assert json.loads(verified.stdout)["valid"] is True
+
+
+
+def test_audit_checkpoint_key_export_writes_private_file_without_printing_secret(tmp_path):
+    data_dir = tmp_path / "controller-data"
+    data_dir.mkdir(mode=0o700)
+    key = "ab" * 32
+    credentials = data_dir / "credentials.json"
+    credentials.write_text(json.dumps({"audit_checkpoint_key_hex": key}), encoding="utf-8")
+    credentials.chmod(0o600)
+    recovery_dir = tmp_path / "offhost-secrets"
+    recovery_dir.mkdir(mode=0o700)
+    output = recovery_dir / "audit-checkpoint.key"
+
+    exported = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "export_audit_checkpoint_key.py"),
+            "--data-dir", str(data_dir),
+            "--out", str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert exported.returncode == 0, exported.stderr
+    assert output.read_text(encoding="ascii") == key + "\n"
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert key not in exported.stdout
