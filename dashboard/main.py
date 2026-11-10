@@ -1,11 +1,15 @@
 """CyberGuardian Dashboard — operator UI (wired to API gateway)."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import hmac
+import json
 import os
 import secrets
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -65,9 +69,40 @@ def headers(tenant: str = "default"):
     return h
 
 
+def operator_headers(session, method: str, path: str, tenant: str):
+    """Mint request-bound operator identity from the server-side session only."""
+    result = headers(tenant)
+    secret = os.getenv("CG_OPERATOR_ASSERTION_SECRET", "")
+    if not secret:
+        if dashboard_auth.PRODUCTION:
+            raise RuntimeError("CG_OPERATOR_ASSERTION_SECRET must be configured in production")
+        return result
+    if len(secret.encode("utf-8")) < 32:
+        raise RuntimeError("CG_OPERATOR_ASSERTION_SECRET must contain at least 32 bytes")
+    if not session:
+        raise RuntimeError("authenticated operator session required for gateway request")
+    claims = {
+        "v": 1,
+        "sub": str(session["username"]),
+        "role": str(session["role"]),
+        "tenant_id": str(session["tenant_id"]),
+        "iat": int(time.time()),
+        "nonce": secrets.token_urlsafe(32),
+        "method": method.upper(),
+        "path": path,
+        "request_id": uuid.uuid4().hex,
+    }
+    raw = json.dumps(claims, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    signature = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    result["X-CG-Operator-Assertion"] = encoded + "." + signature
+    result["X-Request-ID"] = claims["request_id"]
+    return result
+
+
 async def api_get(path: str, request: Optional[Request] = None):
     async with httpx.AsyncClient(timeout=8.0) as client:
-        r = await client.get(f"{API_URL}{path}", headers=headers(tenant_for_request(request) if request else "default"))
+        r = await client.get(f"{API_URL}{path}", headers=operator_headers(check_auth(request), "GET", path.split("?", 1)[0], tenant_for_request(request)) if request else headers("default"))
         return r
 
 
@@ -76,7 +111,7 @@ async def api_post(path: str, body: Optional[dict] = None, request: Optional[Req
         r = await client.post(
             f"{API_URL}{path}",
             json=body or {},
-            headers=headers(tenant_for_request(request) if request else "default"),
+            headers=operator_headers(check_auth(request), "POST", path.split("?", 1)[0], tenant_for_request(request)) if request else headers("default"),
         )
         return r
 
@@ -165,7 +200,7 @@ async def index(request: Request):
         return RedirectResponse("/login", status_code=303)
     risk, fleet, gate, mode, issues = {}, {}, {}, {}, {}
     async with httpx.AsyncClient(timeout=8.0) as client:
-        h = headers(sess.get("tenant_id") or "default")
+        h_by_path = lambda method, path: operator_headers(sess, method, path, str(sess.get("tenant_id") or "default"))
         for key, path in [
             ("risk", "/v1/risk/summary"),
             ("fleet", "/v1/fleet"),
@@ -174,7 +209,7 @@ async def index(request: Request):
             ("issues", "/v1/issues/client-view"),
         ]:
             try:
-                r = await client.get(f"{API_URL}{path}", headers=h)
+                r = await client.get(f"{API_URL}{path}", headers=h_by_path("GET", path))
                 data = r.json() if r.status_code < 400 else {"error": r.status_code}
             except Exception:
                 data = {"error": "api unreachable"}
