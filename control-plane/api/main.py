@@ -491,7 +491,43 @@ async def _verify_dashboard_operator(request: Request, call_next):
     if not is_agent and nad_key and hmac.compare_digest(api_key, nad_key):
         if not nad_scope_allows(request.method, request.url.path):
             return JSONResponse({"detail": "NAD service is not authorized for this endpoint"}, status_code=403)
-        request.state.tenant_id = str(request.headers.get("X-Tenant-ID") or "default")
+        body = await request.body()
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeError, ValueError):
+            return JSONResponse({"detail": "NAD detection payload is invalid"}, status_code=400)
+        asset_id = str(payload.get("asset_id") or "").strip() if isinstance(payload, dict) else ""
+        if not asset_id:
+            return JSONResponse({"detail": "NAD detections require a registered asset_id"}, status_code=400)
+        with _mod.db() as conn:
+            asset = conn.execute(
+                "SELECT tenant_id FROM assets WHERE asset_id=?",
+                (asset_id,),
+            ).fetchone()
+        registered_tenant = str(asset["tenant_id"] or "").strip() if asset else ""
+        if not registered_tenant:
+            return JSONResponse({"detail": "NAD asset is not registered to a tenant"}, status_code=403)
+        requested_tenant = str(request.headers.get("X-Tenant-ID") or "").strip()
+        if requested_tenant and requested_tenant != registered_tenant:
+            return JSONResponse({"detail": "NAD tenant does not match registered asset"}, status_code=403)
+        headers = [
+            (key, value)
+            for key, value in request.scope.get("headers", [])
+            if key.lower() != b"x-tenant-id"
+        ]
+        headers.append((b"x-tenant-id", registered_tenant.encode("utf-8")))
+        request.scope["headers"] = headers
+        sent = False
+
+        async def replay_nad_body():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        request = Request(request.scope, replay_nad_body)
+        request.state.tenant_id = registered_tenant
         return await call_next(request)
     if not is_agent and dashboard_key and hmac.compare_digest(api_key, dashboard_key) and request.url.path != "/health":
         if not dashboard_scope_allows(request.method, request.url.path):
