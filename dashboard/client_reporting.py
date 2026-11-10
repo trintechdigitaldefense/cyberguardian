@@ -164,6 +164,7 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
         topMargin=.65*inch, bottomMargin=.65*inch,
         title="CyberGuardian Client Security Report",
         author="TrinTech Digital Defense",
+        pageCompression=0,
     )
     coverage_text = (
         f"<b>Activity reporting period:</b> {period_start.strftime('%Y-%m-%d %H:%M:%S UTC')} "
@@ -190,7 +191,7 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
     metrics = [
         ["Computers / devices", str(assets), "Currently connected", str(online)],
         ["Open security alerts", str(detections), "Items awaiting approval", str(len(pending))],
-        ["Recent activity records reviewed", str(len(audit)), "Remembered issues", str(len(issues))],
+        ["Historical activity records" if report_period is not None else "Recent activity records reviewed", str(len(audit)), "Remembered issues", str(len(issues))],
     ]
     table = Table(metrics, colWidths=[1.55*inch, .8*inch, 1.55*inch, .8*inch])
     table.setStyle(TableStyle([
