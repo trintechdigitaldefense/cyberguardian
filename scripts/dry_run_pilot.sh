@@ -80,9 +80,13 @@ remediation = call("Attempt gated auto-remediation", "/v1/issues/auto-remediate"
 
 # Fail if the API explicitly reports that Client Mode is off. Keep the full
 # response visible for the operator to verify the human gate's blocked result.
-if isinstance(mode, dict) and mode.get("client_mode") is False:
-    raise SystemExit("Safety check failed: API reports Client Mode OFF")
-print("Review the auto-remediation response: it must remain blocked pending human approval.")
+if not isinstance(mode, dict) or mode.get("client_mode") is not True:
+    raise SystemExit("Safety check failed: API did not confirm Client Mode ON")
+if not isinstance(remembered, dict) or remembered.get("status") != "ok":
+    raise SystemExit("Synthetic issue creation was not confirmed")
+if not isinstance(remediation, dict) or remediation.get("status") != "blocked":
+    raise SystemExit("Safety check failed: auto-remediation was not blocked pending human approval")
+print("Verified: synthetic issue created and auto-remediation blocked pending human approval.")
 print("No disruptive action should be approved or executed during this dry-run.")
 PY
 echo "=== Synthetic dry-run requests completed ==="
