@@ -215,7 +215,11 @@ def main() -> int:
         payload=command_result, headers=result_headers,
     )
     assert replay_status == result_status and replay_body == result_body
-    assert replay_headers.get("X-Cg-Idempotent-Replay", "").lower() == "true"
+    normalized_replay_headers = {
+        str(key).lower(): str(value).lower()
+        for key, value in replay_headers.items()
+    }
+    assert normalized_replay_headers.get("x-cg-idempotent-replay") == "true", replay_headers
 
     audit_status, _, audit = call(
         "GET", "/v1/audit?limit=200",
