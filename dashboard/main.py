@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import html
 import hmac
 import json
 import os
@@ -15,6 +14,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Form, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -28,6 +28,7 @@ API_KEY = os.getenv("CG_DASHBOARD_API_KEY", "")
 
 app = FastAPI(title="CyberGuardian Dashboard", version="1.4.0-tier3")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 @app.on_event("startup")
 async def validate_dashboard_credentials():
@@ -47,7 +48,8 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
-        "form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+        "form-action 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; "
+        "script-src-attr 'none'; style-src-attr 'none'",
     )
     if COOKIE_SECURE:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -131,26 +133,14 @@ async def health():
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(error: Optional[str] = None):
     login_csrf = secrets.token_urlsafe(32)
-    err = f'<p style="color:#f87171">{html.escape(error)}</p>' if error else ""
-    page = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CyberGuardian Login</title>
-<style>body{{font-family:system-ui;background:#0b0f19;color:#e2e8f0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
-.box{{background:#141b2d;border:1px solid #1e293b;border-radius:1rem;padding:2rem;width:90%;max-width:360px}}
-h1 span{{color:#22d3ee}} input{{width:100%;padding:.75rem;margin-bottom:1rem;border-radius:.5rem;border:1px solid #1e293b;background:#0b0f19;color:#e2e8f0;box-sizing:border-box}}
-button{{width:100%;padding:.75rem;border:none;border-radius:.5rem;background:#0e7490;color:#fff;font-weight:600;cursor:pointer}}</style></head>
-<body><div class="box"><h1>Cyber<span>Guardian</span></h1>
-<form method="post" action="/login">
-<input type="hidden" name="login_csrf" value="{html.escape(login_csrf)}">
-<input name="username" placeholder="Username" autocomplete="username" required>
-<input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
-<button type="submit">Sign in</button></form>{err}</div></body></html>"""
-    response = HTMLResponse(page)
+    response = templates.TemplateResponse(
+        Request, "login.html", {"login_csrf": login_csrf, "error": error or ""},
+    )
     response.set_cookie(
         LOGIN_CSRF_COOKIE, login_csrf, httponly=True, secure=COOKIE_SECURE,
         samesite="lax", max_age=600, path="/",
     )
     return response
-
 
 @app.post("/login")
 async def do_login(
