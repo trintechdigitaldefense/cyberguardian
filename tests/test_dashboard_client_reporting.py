@@ -31,8 +31,7 @@ def test_client_report_is_pdf_and_translates_terms():
     )
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
-    assert "malware" in reporting.translate("malware alert")
-    assert "harmful software" in reporting.translate("malware alert")
+    assert reporting.translate("malware alert") == "harmful software alert"
 
 
 def test_client_report_rejects_missing_or_mismatched_tenant():
