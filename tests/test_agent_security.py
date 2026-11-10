@@ -76,9 +76,9 @@ def test_per_agent_identity_is_bound_to_active_enrollment(tmp_path, monkeypatch)
         "agents": {
             "host-a": {
                 "tenant_id": "tenant-a",
-                "api_key": "agent-api-key",
-                "identity_secret": "agent-identity-secret",
-                "command_secret": "agent-command-secret",
+                "api_key": "agent-api-key-" + "a" * 40,
+                "identity_secret": "agent-identity-secret-" + "b" * 40,
+                "command_secret": "agent-command-secret-" + "c" * 40,
                 "status": "active",
             }
         }
@@ -90,14 +90,14 @@ def test_per_agent_identity_is_bound_to_active_enrollment(tmp_path, monkeypatch)
     signature = agent_identity.sign_registration("host-a", fingerprint, timestamp)
     ok, reason = agent_identity.verify_registration("host-a", fingerprint, timestamp, signature)
     assert ok, reason
-    assert agent_identity.assert_not_admin_key_on_agent("agent-api-key")[0]
+    assert agent_identity.assert_not_admin_key_on_agent("agent-api-key-" + "a" * 40)[0]
 
     data = json.loads(store.read_text())
     data["agents"]["host-a"]["status"] = "revoked"
     store.write_text(json.dumps(data))
     ok, reason = agent_identity.verify_registration("host-a", fingerprint, timestamp, signature)
     assert not ok and reason == "agent_identity_secret_required"
-    assert not agent_identity.assert_not_admin_key_on_agent("agent-api-key")[0]
+    assert not agent_identity.assert_not_admin_key_on_agent("agent-api-key-" + "a" * 40)[0]
 
 
 
@@ -107,9 +107,9 @@ def test_registration_rejects_bad_signature_and_stale_timestamp(tmp_path, monkey
         "agents": {
             "host-secure": {
                 "tenant_id": "tenant-secure",
-                "api_key": "agent-key-secure",
-                "identity_secret": "identity-secret-secure",
-                "command_secret": "command-secret-secure",
+                "api_key": "agent-key-secure-" + "a" * 40,
+                "identity_secret": "identity-secret-secure-" + "b" * 40,
+                "command_secret": "command-secret-secure-" + "c" * 40,
                 "status": "active",
             }
         }
