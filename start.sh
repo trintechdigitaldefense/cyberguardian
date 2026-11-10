@@ -83,9 +83,11 @@ if ! wait_http "nad" "http://127.0.0.1:8002/health" 10; then
 fi
 
 echo "Starting Dashboard (3000) on ${BIND_HOST}..."
-(cd "$ROOT/dashboard" && API_URL=http://127.0.0.1:8080 CYBERGUARDIAN_API_KEY="$CYBERGUARDIAN_API_KEY" \
+(cd "$ROOT/dashboard" && API_URL=http://127.0.0.1:8080 CG_DASHBOARD_API_KEY="$CYBERGUARDIAN_API_KEY" \
   python3 -m uvicorn main:app --host "$BIND_HOST" --port 3000 > /tmp/cg-dashboard.log 2>&1 &)
-if ! wait_http "dashboard" "http://127.0.0.1:3000/" 20; then
+# / redirects unauthenticated users to /login (HTTP 303); use the public
+# health endpoint so readiness checks process availability, not login state.
+if ! wait_http "dashboard" "http://127.0.0.1:3000/health" 20; then
   tail -20 /tmp/cg-dashboard.log 2>/dev/null || true
   shutdown_started
   exit 1
