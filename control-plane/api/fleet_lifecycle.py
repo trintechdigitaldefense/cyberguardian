@@ -16,11 +16,13 @@ def project_fleet_lifecycle(items: list[dict[str, Any]], *, now: float | None = 
         existing = str(item.get("status") or "").lower()
         if existing in {"revoked", "disabled"}:
             item["lifecycle"] = existing
-            item["stale"] = True
             try:
-                item["last_seen_age_seconds"] = max(0, int(current - float(last_seen)))
+                age = max(0, int(current - float(last_seen)))
+                item["last_seen_age_seconds"] = age
+                item["stale"] = age > threshold
             except (TypeError, ValueError):
                 item["last_seen_age_seconds"] = None
+                item["stale"] = True
             projected.append(item)
             continue
         try:
