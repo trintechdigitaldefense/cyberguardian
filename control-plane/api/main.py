@@ -239,7 +239,10 @@ async def _verify_dashboard_operator(request: Request, call_next):
             return _deny_verified_operator(request, claims, "pending action is outside the operator tenant")
 
         async def replay_operator_body():
-            return {"type": "http.request", "body": raw_body, "more_body": False}
+            nonlocal raw_body
+            payload = raw_body
+            raw_body = b""
+            return {"type": "http.request", "body": payload, "more_body": False}
 
         # Pass the authenticated tenant into gateway handlers that expose a
         # tenant_id query filter. Routes without that parameter ignore it.
