@@ -148,12 +148,15 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
                 "header_tenant": request.headers.get("X-Tenant-ID"),
             }
 
+        async def nad_auth_chain(request):
+            return await main._verify_dashboard_operator(request, capture_nad_tenant)
+
         nad_scoped = asyncio.run(
-            main._verify_dashboard_operator(nad_request(), capture_nad_tenant)
+            main._agent_scope_and_command_signing(nad_request(), nad_auth_chain)
         )
         assert nad_scoped == {"tenant_id": "tenant-a", "header_tenant": "tenant-a"}
         nad_spoofed = asyncio.run(
-            main._verify_dashboard_operator(nad_request("tenant-b"), capture_nad_tenant)
+            main._agent_scope_and_command_signing(nad_request("tenant-b"), nad_auth_chain)
         )
         assert nad_spoofed.status_code == 403
 
