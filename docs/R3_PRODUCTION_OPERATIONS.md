@@ -103,30 +103,29 @@ export BACKUP_DIR=/path/to/encrypted-backups/cyberguardian-$(date +%Y%m%d-%H%M%S
 mkdir -m 700 -p "$BACKUP_DIR"
 python3 - <<'PY'
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
 source = Path(os.environ["CG_DATA_DIR"])
 target = Path(os.environ["BACKUP_DIR"])
-for name in ("dashboard_auth.sqlite3", "cyberguardian.db", "operator_assertion_nonces.sqlite3"):
-    src_path = source / name
-    if src_path.exists():
+for src_path in source.rglob("*"):
+    if not src_path.is_file():
+        continue
+    relative = src_path.relative_to(source)
+    dst_path = target / relative
+    dst_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if src_path.suffix in {".sqlite3", ".db"}:
         src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True)
-        dst_path = target / name
         dst = sqlite3.connect(dst_path)
         with dst:
             src.backup(dst)
         dst.close()
         src.close()
-        dst_path.chmod(0o600)
-for name in ("credentials.json", "gate_config.json"):
-    src_path = source / name
-    if src_path.exists():
-        dst_path = target / name
-        dst_path.write_bytes(src_path.read_bytes())
-        dst_path.chmod(0o600)
-PY
-```
+    else:
+        shutil.copy2(src_path, dst_path)
+    dst_path.chmod(0o600)
+PY```
 
 Encrypt and store backups in an access-controlled location. Restore only while the application services are stopped; restore the complete set together, then verify file ownership and restrictive permissions before restarting. Retain the replay-nonce database during restore. If it cannot be restored, keep the gateway offline for at least 65 seconds before accepting dashboard assertions so any previously issued 60-second assertion has expired.
 
