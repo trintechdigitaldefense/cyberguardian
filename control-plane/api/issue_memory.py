@@ -283,10 +283,10 @@ def migrate_legacy_tenant_ids(asset_tenant_lookup) -> Dict[str, Any]:
                         migrated_archived += 1
                 else:
                     unresolved.append(str(item.get("id") or "unknown"))
-        if migrated_active:
-            _write_all(active)
         if migrated_archived:
             _write_archive_all(archived)
+        if migrated_active:
+            _write_all(active)
         return {
             "active_migrated": migrated_active,
             "archived_migrated": migrated_archived,
