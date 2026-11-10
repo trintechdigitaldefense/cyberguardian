@@ -149,3 +149,31 @@ def test_transient_server_error_is_queued_for_retry(monkeypatch):
     assert agent.AUTH_REJECTED is False
     assert len(queue.calls) == 1
     assert queue.calls[0][1] == "/v1/detections"
+
+
+
+def test_scan_registers_before_polling_and_defers_poll_when_heartbeat_fails(monkeypatch):
+    events = []
+
+    class QueueStub:
+        def flush(self, callback):
+            events.append("flush")
+
+    monkeypatch.setattr(agent, "queue", QueueStub())
+    monkeypatch.setattr(agent, "AUTH_REJECTED", False)
+    monkeypatch.setattr(agent, "scan_count", 0)
+    monkeypatch.setattr(agent, "baseline_names", set())
+    monkeypatch.setattr(agent, "heartbeat", lambda: events.append("heartbeat") or True)
+    monkeypatch.setattr(agent, "poll_and_execute_commands", lambda: events.append("poll"))
+    monkeypatch.setattr(agent, "fim_scan", lambda: events.append("fim"))
+    monkeypatch.setattr(agent, "net_scan", lambda: events.append("net"))
+    monkeypatch.setattr(agent, "list_processes", lambda: [])
+
+    agent.scan_once()
+    assert events.index("heartbeat") < events.index("poll")
+
+    events.clear()
+    monkeypatch.setattr(agent, "heartbeat", lambda: events.append("heartbeat") or False)
+    agent.scan_once()
+    assert "heartbeat" in events
+    assert "poll" not in events
