@@ -69,6 +69,8 @@ Set the controller URL and all values printed by the enrollment script:
 
 Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
 
+Registration is retried with a fresh timestamp on the next heartbeat rather than placed in the offline queue, because signed registration envelopes expire. Durable detections and command results continue to use the offline queue. HTTP 401/403 responses stop the agent without queueing rejected requests; rotate or re-enroll the device credentials before restarting it.
+
 ### Running the enrolled agent on the controller device
 
 If the controller and agent run on the same Linux/Termux device, configure startup to use the enrolled environment file:
