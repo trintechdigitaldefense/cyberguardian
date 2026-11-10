@@ -15,7 +15,7 @@ Authorized defensive use only. CyberGuardian is a supervised control plane, not 
 | Agent identity | Required in production | Per-agent credentials and tenant/asset binding |
 | Dashboard cookie | Secure, HttpOnly, SameSite=Lax | Requires HTTPS or a browser-trusted localhost origin |
 
-The Compose file binds dashboard and API ports to loopback and keeps the decision service private. For remote operator access, use an SSH tunnel or a TLS reverse proxy. Do not publish ports 3000, 8080, or 8001 directly to the internet.
+The Compose file binds dashboard and API ports to loopback and keeps the decision service private. Standalone `start.sh` also forces loopback binding whenever production identity enforcement is enabled and rejects an explicit non-loopback bind. The NAD synthetic `/v1/simulate` endpoint is disabled in production. For remote operator access, use an SSH tunnel or a TLS reverse proxy. Do not publish ports 3000, 8080, or 8001 directly to the internet.
 
 ## Required deployment configuration
 
@@ -40,7 +40,7 @@ Run `./scripts/setup_credentials.sh` to create the administrator credential and 
 
 All five administrator/service/signing values must be at least 32 bytes and pairwise unique. Never reuse the administrator key as a dashboard, NAD, decision-service or operator-signing secret. Standalone `./start.sh` reads the generated service secrets from `data/credentials.json`; production startup fails before launching services if they are absent, too short or duplicated.
 
-Keep `.env`, `data/credentials.json`, and the dashboard SQLite database out of Git. Restrict the data directory to the service operator (directory mode 700; credential and database files mode 600).
+Keep `.env`, `data/credentials.json`, and the dashboard SQLite database out of Git. Restrict the data directory to the service operator (directory mode 700; credential and database files mode 600). If the bootstrap admin or lab-agent key has been exposed, rerun setup with a blank admin-key prompt and `CG_ROTATE_BOOTSTRAP_AGENT_KEY=1` to generate fresh bootstrap credentials; this does not rotate enrolled per-device credentials.
 
 ## Dashboard authentication
 
