@@ -104,3 +104,26 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             },
         )
         assert authorized.status_code == 200, authorized.text
+
+        query_override = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="GET", path="/v1/fleet",
+            request_id="integration-query-override",
+        )
+        denied_query_override = client.get(
+            "/v1/fleet?tenant_id=tenant-b",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": query_override},
+        )
+        assert denied_query_override.status_code == 403
+
+        body_override = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST", path="/v1/client-mode",
+            request_id="integration-body-override",
+        )
+        denied_body_override = client.post(
+            "/v1/client-mode",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": body_override},
+            json={"client_mode": True, "tenant_id": "tenant-b"},
+        )
+        assert denied_body_override.status_code == 403
