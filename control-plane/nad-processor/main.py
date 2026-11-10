@@ -9,6 +9,12 @@ app = FastAPI(title="CyberGuardian NAD", version="1.0.0-detect")
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("CG_NAD_API_KEY", "")
 
+@app.on_event("startup")
+async def validate_nad_credentials():
+    if os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        if len(API_KEY.encode("utf-8")) < 32:
+            raise RuntimeError("production NAD service credential must be at least 32 bytes")
+
 class SimulatedAnomaly(BaseModel):
     asset_id: str
     anomaly_type: str = "suspicious_process"
