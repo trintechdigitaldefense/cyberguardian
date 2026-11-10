@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -26,3 +27,69 @@ def test_nad_scope_is_detection_submission_only():
     assert not nad_scope_allows("GET", "/v1/detections")
     assert not nad_scope_allows("POST", "/v1/gate/approve/action-7")
     assert not nad_scope_allows("GET", "/v1/fleet")
+
+
+
+def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from operator_context import mint_assertion
+
+    data_dir = tmp_path / "controller-data"
+    monkeypatch.setenv("CG_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CG_PRODUCTION", "1")
+    monkeypatch.setenv("CG_REQUIRE_AGENT_IDENTITY", "1")
+    monkeypatch.setenv("CG_REQUIRE_COMMAND_SIG", "1")
+    admin_key = "admin-secret-" + "a" * 40
+    dashboard_key = "dashboard-secret-" + "b" * 40
+    nad_key = "nad-secret-" + "c" * 40
+    assertion_secret = "operator-secret-" + "d" * 40
+    decision_key = "decision-secret-" + "e" * 40
+    monkeypatch.setenv("CYBERGUARDIAN_API_KEY", admin_key)
+    monkeypatch.setenv("CG_DASHBOARD_API_KEY", dashboard_key)
+    monkeypatch.setenv("CG_NAD_API_KEY", nad_key)
+    monkeypatch.setenv("CG_OPERATOR_ASSERTION_SECRET", assertion_secret)
+    monkeypatch.setenv("DECISION_SERVICE_API_KEY", decision_key)
+
+    import runtime_paths
+    import agent_credentials
+    import agent_identity
+    importlib.reload(runtime_paths)
+    importlib.reload(agent_credentials)
+    importlib.reload(agent_identity)
+    import main
+    importlib.reload(main)
+    main._mod.DB_PATH = data_dir / "gateway.sqlite3"
+    main._mod.GATE_CFG = data_dir / "gate_config.json"
+    main._mod.CREDS_PATH = data_dir / "credentials.json"
+
+    with TestClient(main.app) as client:
+        dashboard_headers = {"X-API-Key": dashboard_key, "X-Tenant-ID": "tenant-a"}
+        missing_assertion = client.get("/v1/fleet", headers=dashboard_headers)
+        assert missing_assertion.status_code == 401
+
+        nad_fleet_read = client.get("/v1/fleet", headers={"X-API-Key": nad_key})
+        assert nad_fleet_read.status_code == 403
+
+        dashboard_agent_access = client.get(
+            "/v1/agent/commands?asset_id=host-a", headers=dashboard_headers
+        )
+        assert dashboard_agent_access.status_code == 403
+
+        assertion = mint_assertion(
+            secret=assertion_secret,
+            subject="operator-a",
+            role="admin",
+            tenant_id="tenant-a",
+            method="GET",
+            path="/v1/fleet",
+            request_id="integration-request-1",
+        )
+        authorized = client.get(
+            "/v1/fleet",
+            headers={
+                **dashboard_headers,
+                "X-CG-Operator-Assertion": assertion,
+                "X-Request-ID": "integration-request-1",
+            },
+        )
+        assert authorized.status_code == 200, authorized.text
