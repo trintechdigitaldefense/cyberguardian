@@ -120,3 +120,19 @@ def test_user_registry_enforces_tenant_and_role(tmp_path, monkeypatch):
     user = auth.authenticate_user("viewer-1", "viewer password 123")
     assert user["tenant_id"] == "customer-7"
     assert user["role"] == "viewer"
+
+
+
+def test_dashboard_uses_external_assets_and_escapes_dynamic_values():
+    dashboard = Path(__file__).resolve().parents[1] / "dashboard"
+    index_html = (dashboard / "templates" / "index.html").read_text(encoding="utf-8")
+    login_html = (dashboard / "templates" / "login.html").read_text(encoding="utf-8")
+    script = (dashboard / "static" / "dashboard.js").read_text(encoding="utf-8")
+    assert "<script>" not in index_html and "<style>" not in index_html
+    assert "onclick=" not in index_html and 'style="' not in index_html
+    assert "<script>" not in login_html and "<style>" not in login_html
+    assert "/static/dashboard.js" in index_html
+    assert "/static/dashboard.css" in index_html
+    assert "/static/login.css" in login_html
+    assert ".replace(/</g,'&lt;')" in script
+    assert ".replace(/'/g,'&#39;')" in script
