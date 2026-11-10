@@ -18,6 +18,10 @@ STORE = DATA_DIR / "issue_memory.jsonl"
 MAX_ISSUES = 2000
 
 
+class IssueMemoryIntegrityError(RuntimeError):
+    \"\"\"Raised when issue-memory JSONL contains malformed evidence.\"\"\"
+
+
 @contextmanager
 def _store_lock():
     STORE.parent.mkdir(parents=True, exist_ok=True)
@@ -45,10 +49,10 @@ def _read_all() -> List[Dict[str, Any]]:
                 item = json.loads(line)
                 if isinstance(item, dict):
                     out.append(item)
-            except (ValueError, TypeError):
-                # Do not silently rewrite away corrupt evidence. The caller
-                # sees valid records; verification tooling can flag the file.
-                continue
+            except (ValueError, TypeError) as exc:
+                raise IssueMemoryIntegrityError(
+                    f"invalid issue-memory JSON at line {len(out) + 1}"
+                ) from exc
     return out
 
 
