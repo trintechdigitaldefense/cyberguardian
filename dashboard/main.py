@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import hmac
 import json
 import os
@@ -36,6 +37,10 @@ async def validate_dashboard_credentials():
         secret = os.getenv("CG_OPERATOR_ASSERTION_SECRET", "")
         if len(API_KEY.encode("utf-8")) < 32 or len(secret.encode("utf-8")) < 32:
             raise RuntimeError("production dashboard service and assertion secrets must be at least 32 bytes")
+        try:
+            _trusted_proxy_networks()
+        except ValueError as exc:
+            raise RuntimeError("CG_TRUSTED_PROXY_IPS contains an invalid network") from exc
 
 
 @app.middleware("http")
@@ -69,6 +74,40 @@ def check_auth(request: Request):
 def tenant_for_request(request: Request) -> str:
     session = check_auth(request)
     return str((session or {}).get("tenant_id") or "default")
+
+
+def _trusted_proxy_networks():
+    raw = os.getenv("CG_TRUSTED_PROXY_IPS", "").strip()
+    networks = []
+    for item in filter(None, (part.strip() for part in raw.split(","))):
+        networks.append(ipaddress.ip_network(item, strict=False))
+    return networks
+
+
+def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+        trusted = _trusted_proxy_networks()
+    except ValueError:
+        return peer
+    if not any(peer_ip in network for network in trusted):
+        return peer
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if not forwarded:
+        return peer
+    try:
+        chain = [ipaddress.ip_address(value.strip()) for value in forwarded.split(",")]
+    except ValueError:
+        return peer
+    # Walk from the directly connected proxy toward the client. Only skip
+    # addresses explicitly configured as trusted proxies; ignore spoofed
+    # forwarding headers from untrusted peers.
+    for candidate in reversed(chain):
+        if any(candidate in network for network in trusted):
+            continue
+        return str(candidate)
+    return peer
 
 
 def headers(tenant: str = "default"):
@@ -152,7 +191,7 @@ async def do_login(
     cookie_token = request.cookies.get(LOGIN_CSRF_COOKIE, "")
     if not cookie_token or not hmac.compare_digest(cookie_token, login_csrf):
         return HTMLResponse("Invalid login request. Reload the sign-in page.", status_code=403)
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request)
     if dashboard_auth.is_rate_limited(client_ip, username):
         return HTMLResponse("Too many failed sign-in attempts. Try again later.", status_code=429)
     user = dashboard_auth.authenticate_user(username, password)
