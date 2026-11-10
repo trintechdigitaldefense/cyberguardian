@@ -53,6 +53,24 @@ app = _mod.app
 
 
 @app.on_event("startup")
+async def _migrate_legacy_issue_tenant_associations():
+    def lookup_asset_tenant(asset_id: str):
+        with _mod.db() as conn:
+            row = conn.execute(
+                "SELECT tenant_id FROM assets WHERE asset_id=?",
+                (asset_id,),
+            ).fetchone()
+        return row["tenant_id"] if row else None
+
+    result = _issue_memory.migrate_legacy_tenant_ids(lookup_asset_tenant)
+    if result["unresolved"]:
+        print(
+            "[security] issue-memory legacy records without a resolvable tenant "
+            f"remain hidden from tenant-scoped views: {len(result['unresolved'])}"
+        )
+
+
+@app.on_event("startup")
 async def _validate_workload_credentials():
     if not _mod._agent_id.production_mode():
         return
