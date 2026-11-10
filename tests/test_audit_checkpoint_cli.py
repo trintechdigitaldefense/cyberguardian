@@ -82,3 +82,53 @@ def test_export_and_verify_signed_checkpoint_cli(tmp_path):
     )
     assert rejected.returncode == 2
     assert "signature mismatch" in rejected.stderr
+
+
+
+def test_checkpoint_cli_loads_key_from_private_credentials_store(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(mode=0o700)
+    key = "c3" * 32
+    credentials = data_dir / "credentials.json"
+    credentials.write_text(
+        json.dumps({"audit_checkpoint_key_hex": key}),
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
+    source = tmp_path / "source.jsonl"
+    source.write_text("", encoding="utf-8")
+    snapshot = tmp_path / "offhost" / "snapshot.jsonl"
+
+    env = os.environ.copy()
+    env.pop("CG_AUDIT_CHECKPOINT_KEY_HEX", None)
+    env["CG_DATA_DIR"] = str(data_dir)
+
+    exported = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "export_audit_ledger.py"),
+            "--source", str(source),
+            "--out", str(snapshot),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert exported.returncode == 0, exported.stderr
+
+    verified = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "verify_audit_checkpoint.py"),
+            "--snapshot", str(snapshot),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert verified.returncode == 0, verified.stderr
+    assert json.loads(verified.stdout)["valid"] is True
