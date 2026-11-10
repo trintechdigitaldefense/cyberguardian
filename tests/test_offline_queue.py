@@ -142,3 +142,41 @@ def test_enqueue_is_not_blocked_by_network_delivery(tmp_path):
     assert queue.size() == 1
     remaining = json.loads(queue.path.read_text().splitlines()[0])
     assert remaining["path"] == "/second"
+
+
+
+def test_pending_records_survive_agent_process_restart_and_reconnect(tmp_path):
+    first_process = make_queue(tmp_path)
+    first_process.enqueue("POST", "/v1/detections", {"asset_id": "asset-a", "event_id": "event-1"})
+    first_process.enqueue("POST", "/v1/heartbeat", {"asset_id": "asset-a", "sequence": 7})
+
+    # Recreate the queue object as a restarted agent process would.
+    restarted_process = make_queue(tmp_path)
+    assert restarted_process.size() == 2
+    delivered = []
+    result = restarted_process.flush(
+        lambda path, payload: delivered.append((path, payload)) or (True, {"status": "accepted"}),
+        now=100,
+    )
+    assert result["flushed"] == 2
+    assert restarted_process.size() == 0
+    assert {path for path, _ in delivered} == {"/v1/detections", "/v1/heartbeat"}
+
+
+def test_partial_delivery_keeps_unacknowledged_records_across_restart(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/v1/detections", {"event_id": "accepted"})
+    queue.enqueue("POST", "/v1/detections", {"event_id": "not-accepted"})
+
+    result = queue.flush(
+        lambda path, payload: (payload["event_id"] == "accepted", {}),
+        now=200,
+    )
+    assert result["flushed"] == 1
+    assert result["failed"] == 1
+
+    restarted = make_queue(tmp_path)
+    assert restarted.size() == 1
+    pending = json.loads(restarted.path.read_text().splitlines()[0])
+    assert pending["payload"]["event_id"] == "not-accepted"
+    assert pending["attempts"] == 1
