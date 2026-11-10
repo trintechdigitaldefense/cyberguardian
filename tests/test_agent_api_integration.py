@@ -216,6 +216,7 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         revoked_poll = client.get("/v1/agent/commands?asset_id=host-a", headers=headers)
         assert revoked_poll.status_code == 403
 
+        revoked_ts = time.time()
         revoked_registration = client.post(
             "/v1/assets/register",
             headers=headers,
@@ -226,9 +227,9 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
                 "os": "linux-test",
                 "machine_id": "machine-a",
                 "fingerprint": fingerprint,
-                "identity_ts": time.time(),
+                "identity_ts": revoked_ts,
                 "identity_sig": agent_identity.sign_registration(
-                    "host-a", fingerprint, time.time()
+                    "host-a", fingerprint, revoked_ts
                 ),
             },
         )
