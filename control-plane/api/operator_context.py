@@ -14,11 +14,13 @@ import re
 import secrets
 import sqlite3
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
 MAX_AGE_SECONDS = 60
 MAX_FUTURE_SKEW_SECONDS = 5
+CURRENT_OPERATOR: ContextVar[dict[str, Any] | None] = ContextVar(\"cg_current_operator\", default=None)
 _NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
