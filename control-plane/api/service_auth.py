@@ -11,6 +11,7 @@ _DASHBOARD_EXACT = {
     ("GET", "/v1/issues/client-view"),
     ("GET", "/v1/inventory/report"),
     ("GET", "/v1/audit"),
+    ("GET", "/v1/audit/history"),
     ("GET", "/v1/pilot/scorecard"),
     ("GET", "/v1/reports/weekly"),
     ("GET", "/v1/feedback"),
