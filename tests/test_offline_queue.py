@@ -180,3 +180,19 @@ def test_partial_delivery_keeps_unacknowledged_records_across_restart(tmp_path):
     pending = json.loads(restarted.path.read_text().splitlines()[0])
     assert pending["payload"]["event_id"] == "not-accepted"
     assert pending["attempts"] == 1
+
+
+
+def test_flush_exposes_stable_record_id_to_idempotent_callback(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/v1/detections", {"asset_id": "asset-a", "event_id": "event-42"})
+    stored = json.loads(queue.path.read_text().splitlines()[0])
+    delivered = []
+
+    def post_fn(path, payload, *, record_id=None):
+        delivered.append((path, payload, record_id))
+        return True, {"status": "accepted"}
+
+    result = queue.flush(post_fn, now=100)
+    assert result["flushed"] == 1
+    assert delivered == [("/v1/detections", stored["payload"], stored["id"])]
