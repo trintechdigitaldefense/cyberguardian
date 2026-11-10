@@ -192,3 +192,9 @@ def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
         request("POST", {"test_session": viewer_token, "test_csrf": viewer_csrf}, csrf_header=viewer_csrf)
     )
     assert denied.status_code == 403
+
+    client.cookies.set(dashboard.SESSION_COOKIE, viewer_token)
+    client.cookies.set(dashboard.CSRF_COOKIE, viewer_csrf)
+    viewer_logout = client.post("/logout", headers={"X-CSRF-Token": viewer_csrf})
+    assert viewer_logout.status_code == 303
+    assert dashboard.dashboard_auth.get_session(viewer_token) is None
