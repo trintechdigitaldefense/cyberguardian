@@ -59,6 +59,16 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     importlib.reload(agent_identity)
     import main
     importlib.reload(main)
+    from operator_context import CURRENT_OPERATOR
+    operator_token = CURRENT_OPERATOR.set({
+        "sub": "operator-a", "role": "admin", "tenant_id": "tenant-a",
+        "request_id": "admin-check",
+    })
+    try:
+        assert main._mod.is_admin(dashboard_key)
+        assert not main._mod.is_admin(nad_key)
+    finally:
+        CURRENT_OPERATOR.reset(operator_token)
     main._mod.DB_PATH = data_dir / "gateway.sqlite3"
     main._mod.GATE_CFG = data_dir / "gate_config.json"
     main._mod.CREDS_PATH = data_dir / "credentials.json"
