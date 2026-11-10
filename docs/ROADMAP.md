@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest branch commit:** `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97` (R3 operator, service-scope, browser CSP and login-throttle hardening; full CI passed).  
-**Latest full CI:** [run 42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed on `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration. Python 3.11 reports 75 tests passed.  
+**Latest branch commit:** `28d0f0462d35e0465e9c8783c00cd520611ab071` (R3 operations guide formatting fix; latest code gates passed).  
+**Latest full CI:** [run 42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed on `1565851b4675591ef226b6d61078b332a6aead90`: Python 3.10/3.11/3.12, Docker API build/container smoke, containment integration, and production-mode Compose acceptance. The run includes the operator provisioning CLI and tests.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
@@ -87,7 +87,7 @@ Remaining environment-specific validation is part of R5: repeat the supervised c
 
 ### R3 — Complete operator and service security (IN PROGRESS)
 
-**Latest R3 implementation validation:** [run 42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed all five jobs on `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`. Production-mode gateway tests now exercise signed dashboard acceptance, missing assertion rejection, NAD cross-scope denial, dashboard-to-agent denial, and role-bound admin elevation. The full Compose stack acceptance and cross-tenant object-substitution matrix remain outstanding.
+**R3 acceptance:** [run 42867381433](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42867381433) passed all six jobs, including the production-mode Compose stack. Tests cover signed dashboard acceptance, missing assertion rejection, NAD cross-scope denial, dashboard-to-agent denial, role-bound admin elevation, fleet/audit tenant filtering, cross-tenant rollback/approval object-ID rejection, trusted proxy selection, CSP, login-attempt retention, and operator onboarding. Full Compose acceptance exercises login, CSRF, secure cookies/HSTS, dashboard proxy/audit, logout, workload credential isolation, NAD detection scope and decision-service authentication.
 
 Implemented and covered so far:
 - Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
