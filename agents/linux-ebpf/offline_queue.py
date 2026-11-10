@@ -31,6 +31,8 @@ class QueueFullError(RuntimeError):
 
 def _ensure_private_directory(directory: Path, *, harden_default: bool = False) -> None:
     directory = Path(directory)
+    if directory.is_symlink():
+        raise PermissionError(f"offline queue directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if harden_default:
         os.chmod(directory, 0o700)
@@ -49,6 +51,8 @@ class OfflineQueue:
     ):
         self.path = Path(path)
         self.status_path = Path(status_path) if status_path else self.path.with_name("connectivity.json")
+        if self.path.is_symlink() or self.status_path.is_symlink():
+            raise PermissionError("offline queue and status files must not be symlinks")
         self.lock_path = self.path.with_name(self.path.name + ".lock")
         self.flush_lock_path = self.path.with_name(self.path.name + ".flush.lock")
         self.max_records = max(1, int(max_records))
