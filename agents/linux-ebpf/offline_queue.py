@@ -206,6 +206,10 @@ class OfflineQueue:
         with self._locked():
             return len(self._read_records())
 
+    def pending_count(self) -> int:
+        """Return the number of durable events still awaiting acknowledgement."""
+        return self.size()
+
     def flush(self, post_fn: Callable, *, now: Optional[float] = None, limit: int = 50) -> Dict[str, Any]:
         # Serialize delivery workers with a separate lock while leaving enqueue
         # operations free to acquire the queue data lock during network calls.
