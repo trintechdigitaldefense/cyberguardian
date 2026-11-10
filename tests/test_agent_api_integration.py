@@ -55,16 +55,16 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
 
     record = {
         "tenant_id": "tenant-a",
-        "api_key": "agent-key-host-a",
-        "identity_secret": "identity-secret-host-a",
-        "command_secret": "command-secret-host-a",
+        "api_key": "agent-key-host-a-" + "a" * 40,
+        "identity_secret": "identity-secret-host-a-" + "b" * 40,
+        "command_secret": "command-secret-host-a-" + "c" * 40,
         "status": "active",
     }
     record_b = {
         "tenant_id": "tenant-b",
-        "api_key": "agent-key-host-b",
-        "identity_secret": "identity-secret-host-b",
-        "command_secret": "command-secret-host-b",
+        "api_key": "agent-key-host-b-" + "d" * 40,
+        "identity_secret": "identity-secret-host-b-" + "e" * 40,
+        "command_secret": "command-secret-host-b-" + "f" * 40,
         "status": "active",
     }
     agent_credentials.write_agent_credentials({"host-a": record, "host-b": record_b})
