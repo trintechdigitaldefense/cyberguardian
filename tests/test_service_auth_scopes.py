@@ -10,7 +10,22 @@ from service_auth import dashboard_scope_allows, nad_scope_allows
 
 
 def test_dashboard_scope_allows_only_documented_dashboard_routes():
-    assert dashboard_scope_allows("GET", "/v1/fleet")
+    for method, path in (
+        ("GET", "/v1/risk/summary"),
+        ("GET", "/v1/fleet"),
+        ("GET", "/v1/gate"),
+        ("GET", "/v1/client-mode"),
+        ("GET", "/v1/issues/client-view"),
+        ("GET", "/v1/inventory/report"),
+        ("GET", "/v1/audit"),
+        ("GET", "/v1/pilot/scorecard"),
+        ("GET", "/v1/reports/weekly"),
+        ("GET", "/v1/feedback"),
+        ("GET", "/v1/hardening"),
+        ("POST", "/v1/client-mode"),
+        ("POST", "/v1/feedback/benign"),
+    ):
+        assert dashboard_scope_allows(method, path), (method, path)
     assert dashboard_scope_allows("POST", "/v1/gate/approve/action-7")
     assert dashboard_scope_allows("POST", "/v1/gate/reject/action-7")
     assert dashboard_scope_allows("POST", "/v1/rollback/asset-9")
