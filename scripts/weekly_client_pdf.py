@@ -95,6 +95,9 @@ def build_pdf(
     safe_client = html.escape(str(client_name))
     safe_tenant = html.escape(str(tenant_id))
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    checks = scorecard.get("checks") or []
+    if not isinstance(checks, list) or any(not isinstance(check, dict) for check in checks):
+        raise RuntimeError("scorecard checks must be a list of objects")
     body = [
         Paragraph(f"CyberGuardian Weekly Digest — {safe_client}", title_style),
         Paragraph(f"Tenant: {safe_tenant}", styles["Normal"]),
@@ -105,9 +108,7 @@ def build_pdf(
         status = html.escape(str(scorecard.get("status", "—")))
         score = html.escape(str(scorecard.get("score", "—")))
         body.append(Paragraph(f"<b>Pilot scorecard:</b> {status} ({score})", styles["Normal"]))
-        for check in scorecard.get("checks") or []:
-            if not isinstance(check, dict):
-                continue
+        for check in checks:
             mark = "✓" if check.get("ok") else "✗"
             label = html.escape(str(check.get("label") or "Unnamed check"))
             detail = html.escape(str(check.get("detail") or ""))
