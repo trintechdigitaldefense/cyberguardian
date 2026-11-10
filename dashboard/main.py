@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = dashboard_auth.DATA_DIR
 CREDS = dashboard_auth.CREDS_PATH
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
-API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
+API_KEY = os.getenv("CG_DASHBOARD_API_KEY", "")
 
 app = FastAPI(title="CyberGuardian Dashboard", version="1.4.0-tier3")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
