@@ -66,43 +66,63 @@ def main() -> int:
     agent_headers = {"X-API-Key": agent["api_key"], "X-Tenant-ID": TENANT}
     nad_headers = {"X-API-Key": os.environ["CG_NAD_API_KEY"]}
 
-    # This high-severity event forces a decision with human-gated actions.
-    status, _, detection = call(
-        "POST",
-        "/v1/detections",
-        headers=nad_headers,
-        payload={
-            "asset_id": "compose-host",
-            "source": "nad-processor",
-            "severity": "high",
-            "confidence": 0.99,
-            "title": "R4 supervised CI acceptance event",
-            "description": "Synthetic high-risk event in a disposable Compose stack",
-            "indicators": {},
-            "tags": ["r4-ci-supervised"],
-        },
-    )
-    assert 200 <= status < 300, detection
+    # Two independent high-severity detections each stage an isolate action.
+    # The CI test approves one and rejects the other, but never executes either
+    # disruptive containment command in the shared Compose namespace.
+    def submit_high_detection(title: str, request_id: str):
+        status, _, body = call(
+            "POST",
+            "/v1/detections",
+            headers={**nad_headers, "X-Request-ID": request_id},
+            payload={
+                "asset_id": "compose-host",
+                "source": "nad-processor",
+                "severity": "high",
+                "confidence": 0.99,
+                "title": title,
+                "description": "Synthetic high-risk event in a disposable Compose stack",
+                "indicators": {},
+                "tags": ["r4-ci-supervised", request_id],
+            },
+        )
+        assert 200 <= status < 300, body
+        return body
 
+    detection_approve = submit_high_detection(
+        "R4 supervised approval event", "r4-detection-approve"
+    )
+    detection_reject = submit_high_detection(
+        "R4 supervised rejection event", "r4-detection-reject"
+    )
+
+    gate_path = "/v1/gate"
     gate_status, _, gate = call(
-        "GET", "/v1/gate", headers=operator_headers("GET", "/v1/gate", "r4-gate-list")
+        "GET", gate_path, headers=operator_headers("GET", gate_path, "r4-gate-list")
     )
     assert gate_status == 200, gate
     pending = gate.get("pending") or gate.get("items") or []
-    host_actions = [
+    host_isolations = [
         item for item in pending
         if str(item.get("target") or item.get("asset_id") or "") == "compose-host"
+        and str(item.get("action") or item.get("action_type") or "").lower() == "isolate_host"
     ]
-    def action_name(item):
-        return str(item.get("action") or item.get("action_type") or "").lower()
-
-    approve_item = next((item for item in host_actions if action_name(item) == "escalate"), None)
-    reject_item = next((item for item in host_actions if action_name(item) == "isolate_host"), None)
-    assert approve_item and reject_item, {
-        "detail": "high-severity detection did not stage both human-gated actions",
-        "detection": detection,
-        "gate": gate,
+    # Only the two actions created by this test are selected; ignore unrelated
+    # pending records if a future CI fixture adds any.
+    detection_ids = {
+        str(detection_approve.get("detection_id") or ""),
+        str(detection_reject.get("detection_id") or ""),
     }
+    owned_actions = [
+        item for item in host_isolations
+        if str(item.get("detection_id") or "") in detection_ids
+    ]
+    assert len(owned_actions) == 2, {
+        "detail": "expected one human-gated isolate action per synthetic detection",
+        "detection_ids": sorted(detection_ids),
+        "pending": pending,
+    }
+    owned_actions.sort(key=lambda item: float(item.get("created_at") or 0))
+    approve_item, reject_item = owned_actions
     approve_id = str(approve_item.get("id") or approve_item.get("pending_action_id") or "")
     reject_id = str(reject_item.get("id") or reject_item.get("pending_action_id") or "")
     assert approve_id and reject_id and approve_id != reject_id
@@ -138,23 +158,37 @@ def main() -> int:
         str(item.get("pending_action_id") or item.get("approval_ref") or "") == reject_id
         for item in commands
     ), "rejected action must never be delivered"
-
-    expected_signature = command_signing.sign_command(
+    assert approved_command.get("action") == "isolate_host"
+    approved_signature = command_signing.sign_command(
         approved_command, agent["command_secret"]
     )
-    assert expected_signature == approved_command.get("signature"), "delivered command signature is invalid"
-    assert approved_command.get("action") == "escalate", "CI must execute only the non-disruptive action"
+    assert approved_signature == approved_command.get("signature"), "approved command signature is invalid"
 
-    # The agent's escalate handler is a no-host-change action. Run the actual
-    # containment dispatcher and report its result; no firewall/process change
-    # is performed by this workflow.
-    execution = containment.execute_command(approved_command)
+    # A separately queued escalate command exercises actual safe agent dispatch.
+    # It has no host-side effect and is not a substitute for the human gate.
+    safe_command = next(
+        (
+            item for item in commands
+            if str(item.get("pending_action_id") or "") == "r4-ci-safe-escalate"
+        ),
+        None,
+    )
+    assert safe_command and safe_command.get("action") == "escalate", {
+        "detail": "safe non-disruptive command was not delivered",
+        "commands": commands,
+    }
+    expected_signature = command_signing.sign_command(
+        safe_command, agent["command_secret"]
+    )
+    assert expected_signature == safe_command.get("signature"), "safe command signature is invalid"
+
+    execution = containment.execute_command(safe_command)
     assert execution.get("ok") is True, execution
     command_result = {
-        "command_id": approved_command.get("id") or approved_command.get("command_id"),
+        "command_id": safe_command.get("id") or safe_command.get("command_id"),
         "asset_id": "compose-host",
-        "action": approved_command["action"],
-        "target": approved_command["target"],
+        "action": safe_command["action"],
+        "target": safe_command["target"],
         "ok": True,
         "detail": "R4 Compose CI non-disruptive action completed",
         "result": execution,
@@ -198,7 +232,7 @@ def main() -> int:
     assert report_status == 200, report
     print(json.dumps({
         "workflow": "detect-decision-stage-approve-reject-signed-delivery-safe-execution-audit-report",
-        "detection_id": detection.get("detection_id") or detection.get("id"),
+        "detection_ids": sorted(detection_ids),
         "approved_action_id": approve_id,
         "rejected_action_id": reject_id,
         "command_id": command_id,
