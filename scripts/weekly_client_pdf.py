@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import html
 import json
 import os
+import tempfile
 import sys
 import urllib.parse
 import urllib.request
@@ -107,12 +109,67 @@ def build_pdf(
     return out
 
 
+def _safe_csv_cell(value) -> str:
+    text = str(value if value is not None else "")
+    if text.lstrip().startswith(("=", "+", "-", "@", "\\t", "\\r")):
+        return "'" + text
+    return text
+
+
+def build_csv(scorecard: dict, out: Path, *, tenant_id: str) -> Path:
+    """Atomically export tenant-scoped scorecard rows with spreadsheet formula protection."""
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    checks = scorecard.get("checks") or []
+    if not isinstance(checks, list):
+        raise RuntimeError("scorecard checks must be a list")
+    rows = checks or [{}]
+    fd, temp_name = tempfile.mkstemp(prefix=out.name + ".", suffix=".tmp", dir=str(out.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=("tenant_id", "generated_at_utc", "status", "score", "check_label", "ok", "detail"),
+            )
+            writer.writeheader()
+            generated = datetime.now(timezone.utc).isoformat()
+            for check in rows:
+                if not isinstance(check, dict):
+                    raise RuntimeError("scorecard check entries must be objects")
+                writer.writerow({
+                    "tenant_id": _safe_csv_cell(tenant_id),
+                    "generated_at_utc": generated,
+                    "status": _safe_csv_cell(scorecard.get("status", "")),
+                    "score": _safe_csv_cell(scorecard.get("score", "")),
+                    "check_label": _safe_csv_cell(check.get("label", "")),
+                    "ok": bool(check.get("ok", False)),
+                    "detail": _safe_csv_cell(check.get("detail", "")),
+                })
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, out)
+        os.chmod(out, 0o600)
+        dir_fd = os.open(str(out.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--api", default=os.environ.get("CYBERGUARDIAN_API", "http://127.0.0.1:8080"))
     parser.add_argument("--key", default=os.environ.get("CYBERGUARDIAN_API_KEY", ""))
     parser.add_argument("--tenant-id", default=os.environ.get("CYBERGUARDIAN_TENANT", ""))
     parser.add_argument("--out", default=str(ROOT / "data" / "reports" / "weekly.pdf"))
+    parser.add_argument("--csv-out", default="", help="optional tenant-scoped scorecard CSV output path")
     parser.add_argument("--client", default="Client")
     args = parser.parse_args()
 
@@ -135,6 +192,8 @@ def main():
         raise SystemExit(2)
 
     build_pdf(weekly, scorecard, Path(args.out), client_name=args.client, tenant_id=args.tenant_id)
+    if args.csv_out:
+        build_csv(scorecard, Path(args.csv_out), tenant_id=args.tenant_id)
 
 
 if __name__ == "__main__":
