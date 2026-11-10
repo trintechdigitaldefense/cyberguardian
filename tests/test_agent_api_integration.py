@@ -71,6 +71,55 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
             },
         )
         assert registered.status_code == 200, registered.text
+        with main._mod.db() as conn:
+            first_seen = conn.execute(
+                "SELECT last_seen FROM assets WHERE asset_id=?", ("host-a",)
+            ).fetchone()["last_seen"]
+
+        # A restarted agent replays its signed registration as its heartbeat.
+        # It must refresh last_seen without creating a second inventory row.
+        time.sleep(0.01)
+        reconnect_ts = time.time()
+        reconnect_sig = agent_identity.sign_registration("host-a", fingerprint, reconnect_ts)
+        reconnected = client.post(
+            "/v1/assets/register",
+            headers=headers,
+            json={
+                "asset_id": "host-a",
+                "tenant_id": "tenant-a",
+                "hostname": "host-a",
+                "os": "linux-test",
+                "machine_id": "machine-a",
+                "fingerprint": fingerprint,
+                "identity_ts": reconnect_ts,
+                "identity_sig": reconnect_sig,
+            },
+        )
+        assert reconnected.status_code == 200, reconnected.text
+        with main._mod.db() as conn:
+            rows = conn.execute(
+                "SELECT last_seen FROM assets WHERE asset_id=?", ("host-a",)
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["last_seen"] > first_seen
+
+        wrong_tenant_registration = client.post(
+            "/v1/assets/register",
+            headers={**headers, "X-Tenant-ID": "tenant-b"},
+            json={
+                "asset_id": "host-a",
+                "tenant_id": "tenant-b",
+                "hostname": "host-a",
+                "os": "linux-test",
+                "machine_id": "machine-a",
+                "fingerprint": fingerprint,
+                "identity_ts": reconnect_ts + 1,
+                "identity_sig": agent_identity.sign_registration(
+                    "host-a", fingerprint, reconnect_ts + 1
+                ),
+            },
+        )
+        assert wrong_tenant_registration.status_code == 403
 
         main._mod.queue_agent_command(
             asset_id="host-a",
