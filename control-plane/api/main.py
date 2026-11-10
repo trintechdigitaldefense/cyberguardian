@@ -43,6 +43,45 @@ sys.modules["cg_api_main"] = _mod
 _spec.loader.exec_module(_mod)
 app = _mod.app
 
+# Dashboard operator assertions are verified at the gateway boundary. Agent
+# credentials are handled by the existing asset-scoped middleware below.
+import operator_context as _operator_context
+
+
+@app.middleware("http")
+async def _verify_dashboard_operator(request: Request, call_next):
+    api_key = str(request.headers.get("X-API-Key") or "")
+    dashboard_key = str(os.environ.get("CYBERGUARDIAN_API_KEY") or "")
+    is_agent = bool(api_key and find_agent_by_api_key(api_key))
+    if not is_agent and dashboard_key and api_key == dashboard_key and request.url.path != "/health":
+        if not _mod._agent_id.production_mode():
+            return await call_next(request)
+        secret = os.environ.get("CG_OPERATOR_ASSERTION_SECRET", "")
+        if len(secret.encode("utf-8")) < 32:
+            return JSONResponse({"detail": "operator assertion verification is not configured"}, status_code=503)
+        assertion = request.headers.get("X-CG-Operator-Assertion", "")
+        tenant_id = str(request.headers.get("X-Tenant-ID") or "")
+        if not assertion or not tenant_id:
+            return JSONResponse({"detail": "verified operator context required"}, status_code=401)
+        try:
+            claims = _operator_context.verify_assertion(
+                assertion,
+                secret=secret,
+                method=request.method,
+                path=request.url.path,
+                tenant_id=tenant_id,
+                replay_db=Path(os.environ.get("CG_DATA_DIR", "/app/data")) / "operator_assertion_nonces.sqlite3",
+            )
+        except _operator_context.AssertionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=403)
+        request.state.operator_context = claims
+        context_token = _operator_context.CURRENT_OPERATOR.set(claims)
+        try:
+            return await call_next(request)
+        finally:
+            _operator_context.CURRENT_OPERATOR.reset(context_token)
+    return await call_next(request)
+
 # Extend the gateway's accepted API-key set with active per-agent keys. Admin
 # authorization remains separate because _mod.is_admin() only accepts admin_key().
 _original_valid_keys = _mod.valid_keys
