@@ -137,7 +137,7 @@ Every gateway audit write is also appended to `audit_ledger.jsonl` in the persis
 Verify the ledger from the repository root:
 
 ```bash
-CG_DATA_DIR=/path/to/persistent/cyberguardian-data \\
+CG_DATA_DIR=/path/to/persistent/cyberguardian-data \
   python3 scripts/verify_audit_ledger.py
 ```
 
