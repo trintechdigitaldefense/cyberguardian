@@ -285,7 +285,12 @@ def build_client_pdf(snapshot: dict, *, tenant_id: str, generated_at: datetime |
             ]))
             story.append(source_table)
     else:
-        story.append(Paragraph("No recent activity records were returned.", styles["CGBody"]))
+        empty_activity = (
+            "No activity records were found in the selected historical reporting period."
+            if report_period is not None else
+            "No recent activity records were returned."
+        )
+        story.append(Paragraph(empty_activity, styles["CGBody"]))
     weekly = _plain(snapshot.get("weekly_summary"), 5000)
     if weekly:
         story += [Paragraph("Recent monitoring summary", styles["CGSection"])]
