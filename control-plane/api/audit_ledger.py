@@ -198,7 +198,7 @@ def export_signed_checkpoint(source: Path, destination: Path, key: bytes) -> dic
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(signed, handle, sort_keys=True, separators=(",", ":"))
-            handle.write("\\n")
+            handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, manifest_path)
