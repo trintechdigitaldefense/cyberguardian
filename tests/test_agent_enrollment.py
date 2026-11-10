@@ -52,3 +52,23 @@ def test_agent_enrollment_rotation_and_revocation(tmp_path):
     final = json.loads(store.read_text())["agents"]["host-1"]
     assert final["status"] == "revoked"
     assert final.get("revoked_at")
+
+
+
+def test_revoked_agent_can_be_reenrolled_with_fresh_credentials(tmp_path):
+    data_dir = tmp_path / "controller-data"
+    first = _run(data_dir, "--asset-id", "host-2", "--tenant-id", "tenant-a")
+    assert first.returncode == 0, first.stderr
+    store = data_dir / "agent_credentials.json"
+    initial = json.loads(store.read_text())["agents"]["host-2"]
+
+    revoked = _run(data_dir, "--asset-id", "host-2", "--revoke")
+    assert revoked.returncode == 0, revoked.stderr
+    blocked = _run(data_dir, "--asset-id", "host-2", "--tenant-id", "tenant-a")
+    assert blocked.returncode == 0, blocked.stderr
+    renewed = json.loads(store.read_text())["agents"]["host-2"]
+    assert renewed["status"] == "active"
+    assert renewed["tenant_id"] == "tenant-a"
+    assert renewed["api_key"] != initial["api_key"]
+    assert renewed["identity_secret"] != initial["identity_secret"]
+    assert renewed["command_secret"] != initial["command_secret"]
