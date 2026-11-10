@@ -66,6 +66,12 @@ if [ "$STRICT_AGENT_MODE" = "0" ] && [ -f "$ROOT/data/credentials.json" ]; then
   fi
 fi
 if [ "$STRICT_AGENT_MODE" = "1" ]; then
+  if [ -n "${CG_BIND_HOST:-}" ] && [ "$CG_BIND_HOST" != "127.0.0.1" ]; then
+    echo "ERROR: production standalone services must bind to 127.0.0.1; use a TLS reverse proxy or SSH tunnel for remote access."
+    exit 1
+  fi
+  BIND_HOST="127.0.0.1"
+  echo "PRODUCTION: binding API, dashboard and internal services to 127.0.0.1 only"
   export CG_PRODUCTION=1 CG_REQUIRE_AGENT_IDENTITY=1
   if ! python3 - <<'PY'
 import json
