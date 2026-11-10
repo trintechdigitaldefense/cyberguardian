@@ -59,8 +59,8 @@ def test_failed_registration_does_not_enqueue_expiring_identity_envelope(monkeyp
 def test_legacy_queued_registration_is_superseded_after_reconnect(monkeypatch):
     calls = []
 
-    def fake_post(path, payload):
-        calls.append((path, payload))
+    def fake_post(path, payload, **kwargs):
+        calls.append((path, payload, kwargs))
         return True, {"status": "accepted"}
 
     monkeypatch.setattr(agent, "cg_api_post", fake_post)
@@ -74,7 +74,7 @@ def test_legacy_queued_registration_is_superseded_after_reconnect(monkeypatch):
 
     ok, response = agent._deliver_queued_record("/v1/detections", {"event_id": "evt-1"})
     assert ok and response["status"] == "accepted"
-    assert calls == [("/v1/detections", {"event_id": "evt-1"})]
+    assert calls == [("/v1/detections", {"event_id": "evt-1"}, {"idempotency_key": None})]
 
 
 
@@ -177,3 +177,37 @@ def test_scan_registers_before_polling_and_defers_poll_when_heartbeat_fails(monk
     agent.scan_once()
     assert "heartbeat" in events
     assert "poll" not in events
+
+
+
+def test_direct_agent_post_sends_deterministic_idempotency_header(monkeypatch):
+    import hashlib
+    import json
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"status":"accepted"}'
+
+    captured = {}
+    def online(request, timeout=10):
+        captured["headers"] = dict(request.header_items())
+        return Response()
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", online)
+    payload = {"asset_id": "asset-a", "event_id": "event-77"}
+    ok, response = agent.cg_api_post("/v1/detections", payload)
+    canonical = json.dumps(
+        {"kind": "POST", "path": "/v1/detections", "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert ok and response["status"] == "accepted"
+    assert captured["headers"]["X-cg-event-id"] == expected
