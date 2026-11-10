@@ -143,6 +143,24 @@ async def _verify_dashboard_operator(request: Request, call_next):
             )
         except _operator_context.AssertionError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=403)
+        requested_tenant = request.query_params.get("tenant_id")
+        if requested_tenant and requested_tenant != claims["tenant_id"]:
+            return JSONResponse({"detail": "operator tenant does not match requested tenant"}, status_code=403)
+        raw_body = await request.body()
+        if raw_body:
+            try:
+                body_claims = json.loads(raw_body.decode("utf-8"))
+            except (UnicodeError, ValueError):
+                return JSONResponse({"detail": "invalid JSON request body"}, status_code=400)
+            if isinstance(body_claims, dict):
+                body_tenant = body_claims.get("tenant_id")
+                if body_tenant and str(body_tenant) != claims["tenant_id"]:
+                    return JSONResponse({"detail": "operator tenant does not match request body tenant"}, status_code=403)
+
+        async def replay_operator_body():
+            return {"type": "http.request", "body": raw_body, "more_body": False}
+
+        request = Request(request.scope, replay_operator_body)
         request.state.operator_context = claims
         context_token = _operator_context.CURRENT_OPERATOR.set(claims)
         try:
