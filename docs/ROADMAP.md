@@ -4,8 +4,8 @@
 **Primary branch:** main  
 **Active hardening branch:** r2-1.6.0-security  
 **Roadmap status reviewed:** 2026-11-10  
-**Latest branch commit:** `6987348f80ff8a34a9c625f3928cdabf63bf7571` (R3 operator assertions and workload scopes; full CI passed).  
-**Latest full CI:** [run 42861994931](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42861994931) passed on `6987348f80ff8a34a9c625f3928cdabf63bf7571`: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration.  
+**Latest branch commit:** `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97` (R3 operator, service-scope, browser CSP and login-throttle hardening; full CI passed).  
+**Latest full CI:** [run 42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed on `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`: Python 3.10/3.11/3.12, Docker API build/container smoke, and containment integration. Python 3.11 reports 75 tests passed.  
 **R3 code-test baseline:** `61252a951cdbbf23f9d01a78f759f4e4e25b7807` — 62 tests passed.
 **Latest R2 code commit with passing CI:** 10a375c4d0da37953a826baf69986de794668c4f
 
@@ -87,7 +87,7 @@ Remaining environment-specific validation is part of R5: repeat the supervised c
 
 ### R3 — Complete operator and service security (IN PROGRESS)
 
-**Latest R3 implementation validation:** [run 42861994931](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42861994931) passed all five jobs on `6987348f80ff8a34a9c625f3928cdabf63bf7571`, including Python 3.10/3.11/3.12, Docker API smoke and containment integration. R3 remains in progress because full production-mode dashboard/NAD gateway acceptance and full Compose integration have not yet been run.
+**Latest R3 implementation validation:** [run 42863774080](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42863774080) passed all five jobs on `e686f05324ea0b54a39ff2e282ab8d9ddbad0d97`. Production-mode gateway tests now exercise signed dashboard acceptance, missing assertion rejection, NAD cross-scope denial, dashboard-to-agent denial, and role-bound admin elevation. The full Compose stack acceptance and cross-tenant object-substitution matrix remain outstanding.
 
 Implemented and covered so far:
 - Dashboard passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; production rejects legacy plaintext credentials.
@@ -103,8 +103,8 @@ Implemented and covered so far:
 Operator identity and service authorization design plus implementation progress: [docs/R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md](R3_OPERATOR_IDENTITY_AND_SERVICE_AUTH.md). The first signed-assertion implementation slice is now pushed; full implementation and acceptance are not complete.
 
 Still required before R3 can be marked complete:
-1. Complete and validate signed operator identity assertions. Initial code now mints assertions from the dashboard's server-side session, verifies HMAC/freshness/nonce/method/path/tenant at the gateway in production, and adds verified subject/role/tenant/request ID to gateway audit writes. Automated tests cover signature tampering, expiry, replay, request binding, weak secrets and dashboard signing. Remaining: prove the gateway middleware/audit schema in integration, add approval/command correlation, and ensure every dashboard route is covered.
-2. Complete runtime acceptance for least privilege. Separate admin, dashboard, NAD and decision-service secrets are now defined; the dashboard and NAD have default-deny method/path scopes and the dashboard/NAD containers no longer receive the admin key. Unit tests prove scope allow/deny decisions. Remaining: production-mode gateway integration tests for actual credential acceptance/rejection, dashboard assertion-to-admin-role enforcement, and full Compose service-to-service negative tests.
+1. Complete and validate signed operator identity assertions. Initial code now mints assertions from the dashboard's server-side session, verifies HMAC/freshness/nonce/method/path/tenant at the gateway in production, and adds verified subject/role/tenant/request ID to gateway audit writes. Automated tests cover signature tampering, expiry, replay, request binding, weak secrets and dashboard signing. Remaining: full Compose validation of audit persistence and approval/command correlation, cross-tenant object-ID substitution tests, and complete route-by-route audit coverage.
+2. Complete runtime acceptance for least privilege. Separate admin, dashboard, NAD and decision-service secrets are now defined; the dashboard and NAD have default-deny method/path scopes and the dashboard/NAD containers no longer receive the admin key. Unit tests prove scope allow/deny decisions. Remaining: full Compose service-to-service negative tests, cross-tenant object-ID substitution, and approval/command audit correlation. Production-mode gateway integration tests now prove dashboard assertion acceptance and NAD/dashboard scope denials.
 3. Audit every dashboard route and frontend action: ensure every state-changing operation requires CSRF and correct role, and every API proxy call carries the authenticated tenant. Add cross-tenant isolation tests, including object-ID substitution and audit/report endpoints.
 4. Review login throttling against reverse-proxy deployments. Trust forwarded client IP only from configured trusted proxies; add a global/account-only throttle resilient to rotating source IPs and a bounded cleanup/retention strategy for the attempts table.
 5. Harden browser policy: remove inline event handlers/scripts/styles where practical and remove `unsafe-inline` from CSP; test cookie Secure behaviour behind the documented TLS reverse proxy and confirm HSTS is only emitted for HTTPS deployments.
