@@ -3,6 +3,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+CG_DATA_DIR="${CG_DATA_DIR:-$ROOT/data}"
+case "$CG_DATA_DIR" in /*) ;; *) CG_DATA_DIR="$ROOT/$CG_DATA_DIR" ;; esac
+export CG_DATA_DIR
+DATA_DIR="$CG_DATA_DIR"
+CREDENTIALS_FILE="$DATA_DIR/credentials.json"
 
 BIND_HOST="${CG_BIND_HOST:-0.0.0.0}"
 if [ "${CG_HARDENED:-0}" = "1" ] || [ "${CG_HARDENED:-}" = "true" ]; then
@@ -34,13 +39,13 @@ shutdown_started() {
 
 read_credential() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))' \
-    "$ROOT/data/credentials.json" "$1" 2>/dev/null || true
+    "$CREDENTIALS_FILE" "$1" 2>/dev/null || true
 }
 
 if [ ! -f "$ROOT/data/credentials.json" ]; then
   echo "WARNING: No data/credentials.json — run ./scripts/setup_credentials.sh"
 else
-  if ! python3 - "$ROOT/data" <<'PY'
+  if ! python3 - "$DATA_DIR" <<'PY'
 import json
 import os
 import stat
@@ -105,7 +110,7 @@ import json
 import os
 from pathlib import Path
 
-path = Path(os.environ.get("CG_CREDENTIALS_PATH", "data/credentials.json"))
+path = Path(os.environ["CG_DATA_DIR"]) / "credentials.json"
 try:
     stored = json.loads(path.read_text(encoding="utf-8"))
 except (OSError, UnicodeError, ValueError) as exc:
