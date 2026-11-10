@@ -13,24 +13,30 @@ def project_fleet_lifecycle(items: list[dict[str, Any]], *, now: float | None = 
     for original in items:
         item = dict(original)
         last_seen = item.get("last_seen")
+        existing = str(item.get("status") or "").lower()
+        if existing in {"revoked", "disabled"}:
+            item["lifecycle"] = existing
+            item["stale"] = True
+            try:
+                item["last_seen_age_seconds"] = max(0, int(current - float(last_seen)))
+            except (TypeError, ValueError):
+                item["last_seen_age_seconds"] = None
+            projected.append(item)
+            continue
         try:
             seen_at = float(last_seen)
         except (TypeError, ValueError):
             item["lifecycle"] = "unknown"
             item["stale"] = True
             item["last_seen_age_seconds"] = None
-            if item.get("status") == "online":
+            if existing == "online":
                 item["status"] = "unknown"
         else:
             age = max(0, int(current - seen_at))
             stale = age > threshold
             item["last_seen_age_seconds"] = age
             item["stale"] = stale
-            existing = str(item.get("status") or "").lower()
-            if existing in {"revoked", "disabled"}:
-                item["lifecycle"] = existing
-            else:
-                item["lifecycle"] = "offline" if stale else "online"
-                item["status"] = "offline" if stale else "online"
+            item["lifecycle"] = "offline" if stale else "online"
+            item["status"] = "offline" if stale else "online"
         projected.append(item)
     return projected
