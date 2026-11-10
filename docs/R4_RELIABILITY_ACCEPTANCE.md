@@ -76,7 +76,7 @@ The signed-checkpoint command-line regression test is `tests/test_audit_checkpoi
 Fleet transition regression coverage passed in [run 42874048743](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42874048743) on commit `96db82a2db04511bf5eb3e01b4ce816e9b8a6f0c`; all six CI jobs passed, including 107 Python 3.11 tests and production-mode Compose acceptance.
 
 
-Issue archival regression tests: `tests/test_issue_memory.py` verifies that active-store eviction preserves the complete set of records in the archive, archive files are owner-only, and a full archive rejects new records without dropping the active issue. Full CI run [42874401950](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42874401950) passed all six jobs on `c1f2b871b955baa4823c009b9619fe294d30005b`.
+Issue archival regression tests: `tests/test_issue_memory.py` verifies that active-store eviction preserves the complete set of records in the archive, archive files are owner-only, and a full archive rejects new records without dropping the active issue. Full CI run [42874722338](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/42874722338) passed all six jobs on `0612b5182e9d7a5b988989b8770054ceb9ab8478`, including the signed checkpoint restore CLI and 110 Python 3.11 tests.
 
 
 A clean-instance restore helper is available as `scripts/restore_audit_checkpoint.py`. It verifies the HMAC manifest, snapshot digest, record count and chain before writing a separate destination atomically. It refuses an existing destination unless `--replace` is explicitly supplied. The test suite exercises the API and CLI restore paths; operational restore to an independently administered host is still required.
