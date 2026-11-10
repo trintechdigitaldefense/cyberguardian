@@ -39,6 +39,7 @@ class OfflineQueue:
         self.path = Path(path)
         self.status_path = Path(status_path) if status_path else self.path.with_name("connectivity.json")
         self.lock_path = self.path.with_name(self.path.name + ".lock")
+        self.flush_lock_path = self.path.with_name(self.path.name + ".flush.lock")
         self.max_records = max(1, int(max_records))
         self.max_bytes = max(1024, int(max_bytes))
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,13 +49,13 @@ class OfflineQueue:
         except OSError:
             pass
 
-    def _locked(self):
+    def _locked(self, lock_path: Optional[Path] = None):
         class Lock:
             def __init__(inner, owner):
                 inner.owner = owner
                 inner.handle = None
             def __enter__(inner):
-                inner.handle = open(inner.owner.lock_path, "a+")
+                inner.handle = open(lock_path or inner.owner.lock_path, "a+")
                 fcntl.flock(inner.handle.fileno(), fcntl.LOCK_EX)
                 return inner
             def __exit__(inner, exc_type, exc, tb):
@@ -159,21 +160,24 @@ class OfflineQueue:
 
     def flush(self, post_fn: Callable, *, now: Optional[float] = None, limit: int = 50) -> Dict[str, Any]:
         current = time.time() if now is None else float(now)
-        with self._locked():
-            records = self._read_records()
-            if not records:
-                self._write_status("online", 0)
+        # Only one flusher may deliver a given snapshot at a time. Enqueue
+        # operations use a different lock and are never held behind network IO.
+        with self._locked(self.flush_lock_path):
+            with self._locked():
+                snapshot = self._read_records()
+            if not snapshot:
+                with self._locked():
+                    self._write_status("online", 0)
                 return {"flushed": 0, "failed": 0, "remaining": 0, "deferred": 0}
 
-            kept = []
-            flushed = failed = deferred = attempted = 0
-            for record in records:
+            acknowledged = set()
+            updated = {}
+            failed = deferred = attempted = flushed = 0
+            for record in snapshot:
                 if attempted >= max(1, int(limit)):
-                    kept.append(record)
                     deferred += 1
                     continue
                 if float(record.get("next_attempt_at") or 0) > current:
-                    kept.append(record)
                     deferred += 1
                     continue
                 attempted += 1
@@ -181,22 +185,43 @@ class OfflineQueue:
                     if "_corrupt_line" in record:
                         raise ValueError("corrupt queue record retained for operator inspection")
                     ok, _response = post_fn(record["path"], record["payload"])
-                    if ok:
-                        flushed += 1
-                        continue
-                    raise RuntimeError("delivery callback did not acknowledge the record")
+                    if not ok:
+                        raise RuntimeError("delivery callback did not acknowledge the record")
+                    acknowledged.add(record["id"])
+                    flushed += 1
                 except Exception as exc:
-                    attempts = int(record.get("attempts") or 0) + 1
-                    record["attempts"] = attempts
-                    record["last_error"] = str(exc)[:500]
+                    retry_record = dict(record)
+                    attempts = int(retry_record.get("attempts") or 0) + 1
+                    retry_record["attempts"] = attempts
+                    retry_record["last_error"] = str(exc)[:500]
                     delay = min(MAX_BACKOFF_SECONDS, BASE_BACKOFF_SECONDS * (2 ** min(attempts - 1, 10)))
-                    record["next_attempt_at"] = current + delay
-                    kept.append(record)
+                    retry_record["next_attempt_at"] = current + delay
+                    updated[record["id"]] = retry_record
                     failed += 1
-            self._atomic_write(kept)
-            self._write_status("online" if not kept else "degraded", len(kept),
-                               last_flush_at=current, last_flush_acknowledged=flushed)
-            return {"flushed": flushed, "failed": failed, "remaining": len(kept), "deferred": deferred}
+
+            # Re-read under the enqueue lock and reconcile by stable ID. New
+            # records accepted during delivery remain untouched.
+            with self._locked():
+                latest = self._read_records()
+                kept = []
+                for record in latest:
+                    record_id = record.get("id")
+                    if record_id in acknowledged:
+                        continue
+                    kept.append(updated.get(record_id, record))
+                self._atomic_write(kept)
+                self._write_status(
+                    "online" if not kept else "degraded",
+                    len(kept),
+                    last_flush_at=current,
+                    last_flush_acknowledged=flushed,
+                )
+            return {
+                "flushed": flushed,
+                "failed": failed,
+                "remaining": len(kept),
+                "deferred": deferred,
+            }
 
     def set_status(self, mode: str, queued: int = 0):
         self._write_status(mode, queued)
