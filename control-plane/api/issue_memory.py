@@ -16,10 +16,15 @@ from runtime_paths import DATA_DIR
 
 STORE = DATA_DIR / "issue_memory.jsonl"
 MAX_ISSUES = 2000
+MAX_ARCHIVED_ISSUES = 10000
 
 
 class IssueMemoryIntegrityError(RuntimeError):
     """Raised when issue-memory JSONL contains malformed evidence."""
+
+
+class IssueMemoryCapacityError(RuntimeError):
+    """Raised when bounded active and archive stores cannot safely accept more data."""
 
 
 @contextmanager
@@ -56,8 +61,75 @@ def _read_all() -> List[Dict[str, Any]]:
     return out
 
 
+def _archive_path() -> Path:
+    return STORE.with_name(STORE.stem + "_archive" + STORE.suffix)
+
+
+def _archive_evicted(items: List[Dict[str, Any]]) -> None:
+    if not items:
+        return
+    archive = _archive_path()
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    known_ids = set()
+    count = 0
+    if archive.exists():
+        with open(archive, "r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError) as exc:
+                    raise IssueMemoryIntegrityError(
+                        f"invalid issue archive JSON at line {line_number}"
+                    ) from exc
+                if not isinstance(record, dict) or not record.get("id"):
+                    raise IssueMemoryIntegrityError(
+                        f"invalid issue archive record at line {line_number}"
+                    )
+                known_ids.add(str(record["id"]))
+                count += 1
+    pending = []
+    for original in items:
+        issue_id = str(original.get("id") or "")
+        if issue_id and issue_id not in known_ids:
+            archived = dict(original)
+            archived["archived_at"] = time.time()
+            archived["archive_reason"] = "active_store_capacity"
+            pending.append(archived)
+            known_ids.add(issue_id)
+    if count + len(pending) > MAX_ARCHIVED_ISSUES:
+        raise IssueMemoryCapacityError(
+            "issue archive is full; refusing to discard older issue evidence"
+        )
+    if not pending:
+        return
+    fd = os.open(archive, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        for item in pending:
+            encoded = json.dumps(item, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short append to issue archive")
+                view = view[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.chmod(archive, 0o600)
+    dir_fd = os.open(str(archive.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def _write_all(items: List[Dict[str, Any]]) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
+    if len(items) > MAX_ISSUES:
+        _archive_evicted(items[:-MAX_ISSUES])
     fd, temp_name = tempfile.mkstemp(prefix=STORE.name + ".", suffix=".tmp", dir=str(STORE.parent))
     try:
         os.fchmod(fd, 0o600)
@@ -79,6 +151,28 @@ def _write_all(items: List[Dict[str, Any]]) -> None:
         except FileNotFoundError:
             pass
 
+
+def list_archived_issues(limit: int = MAX_ARCHIVED_ISSUES) -> List[Dict[str, Any]]:
+    archive = _archive_path()
+    if not archive.exists():
+        return []
+    out = []
+    with open(archive, "r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except (ValueError, TypeError) as exc:
+                raise IssueMemoryIntegrityError(
+                    f"invalid issue archive JSON at line {line_number}"
+                ) from exc
+            if not isinstance(item, dict):
+                raise IssueMemoryIntegrityError(
+                    f"invalid issue archive record at line {line_number}"
+                )
+            out.append(item)
+    return out[-max(0, min(int(limit), MAX_ARCHIVED_ISSUES)):]
 
 def fingerprint(title: str, asset_id: str, tags=None) -> str:
     tags = tags or []
