@@ -75,6 +75,18 @@ for field in (
     service_credentials[field] = value
     used.add(value)
 
+audit_key_hex = str(existing.get("audit_checkpoint_key_hex") or "").strip().lower()
+try:
+    audit_key_bytes = bytes.fromhex(audit_key_hex)
+except ValueError:
+    audit_key_bytes = b""
+if len(audit_key_bytes) < 32 or audit_key_hex in used:
+    audit_key_hex = secrets.token_hex(32)
+while audit_key_hex in used:
+    audit_key_hex = secrets.token_hex(32)
+service_credentials["audit_checkpoint_key_hex"] = audit_key_hex
+used.add(audit_key_hex)
+
 cred = dict(existing)
 cred.update({
     "admin_user": user,
@@ -108,6 +120,8 @@ print(f"CG_DASHBOARD_API_KEY={service_credentials['dashboard_api_key']}")
 print(f"CG_NAD_API_KEY={service_credentials['nad_api_key']}")
 print(f"CG_OPERATOR_ASSERTION_SECRET={service_credentials['operator_assertion_secret']}")
 print(f"DECISION_SERVICE_API_KEY={service_credentials['decision_service_api_key']}")
+print(f"CG_AUDIT_CHECKPOINT_KEY_HEX={service_credentials['audit_checkpoint_key_hex']}")
+print("Keep the audit checkpoint key separately from the live host and service credentials.")
 print("Password is stored as a PBKDF2 hash, not plaintext.")
 print("Done. Keep keys secret. Never commit credentials.json.")
 PY
