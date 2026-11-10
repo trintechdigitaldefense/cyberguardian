@@ -109,6 +109,21 @@ def test_decision_service_fails_closed_when_production_key_missing(monkeypatch):
     assert response.status_code == 503
 
 
+def test_decision_service_refuses_production_startup_without_service_key(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    decision = _load_decision_module()
+    monkeypatch.setattr(decision, "PRODUCTION", True)
+    monkeypatch.setattr(decision, "SERVICE_KEY", "")
+    try:
+        with TestClient(decision.app):
+            pass
+    except RuntimeError as exc:
+        assert "production decision-service credential" in str(exc)
+    else:
+        raise AssertionError("production decision service must not start without its own key")
+
+
 def test_dashboard_requires_csrf_and_enforces_roles(monkeypatch, tmp_path):
     from starlette.requests import Request
     sys.path.insert(0, str(DASHBOARD_DIR))
