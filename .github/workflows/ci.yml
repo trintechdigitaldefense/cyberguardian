@@ -137,6 +137,8 @@ jobs:
               page = client.get("/login")
               assert page.status_code == 200
               assert "unsafe-inline" not in page.headers.get("content-security-policy", "")
+              assert page.headers.get("strict-transport-security")
+              assert "secure" in page.headers.get("set-cookie", "").lower()
               csrf_login = re.search(r'name="login_csrf" value="([^"]+)"', page.text).group(1)
               bad_login = client.post("/login", data={
                   "username": "compose-ci-admin", "password": password, "login_csrf": "invalid"
