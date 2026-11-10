@@ -143,8 +143,8 @@ async def _verify_dashboard_operator(request: Request, call_next):
             )
         except _operator_context.AssertionError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=403)
-        requested_tenant = request.query_params.get("tenant_id")
-        if requested_tenant and requested_tenant != claims["tenant_id"]:
+        requested_tenants = request.query_params.getlist("tenant_id")
+        if any(value != claims["tenant_id"] for value in requested_tenants):
             return JSONResponse({"detail": "operator tenant does not match requested tenant"}, status_code=403)
         raw_body = await request.body()
         if raw_body:
