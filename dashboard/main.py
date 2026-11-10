@@ -131,10 +131,10 @@ async def health():
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(error: Optional[str] = None):
+async def login_page(request: Request, error: Optional[str] = None):
     login_csrf = secrets.token_urlsafe(32)
     response = templates.TemplateResponse(
-        Request, "login.html", {"login_csrf": login_csrf, "error": error or ""},
+        request, "login.html", {"login_csrf": login_csrf, "error": error or ""},
     )
     response.set_cookie(
         LOGIN_CSRF_COOKIE, login_csrf, httponly=True, secure=COOKIE_SECURE,
