@@ -279,10 +279,12 @@ def scan_once():
     global scan_count, baseline_names
     poll_and_execute_commands()
     if AUTH_REJECTED:
-        raise SystemExit("agent credentials rejected; stop and re-enroll or rotate this device")
+        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+        raise SystemExit(2)
     heartbeat()
     if AUTH_REJECTED:
-        raise SystemExit("agent credentials rejected; stop and re-enroll or rotate this device")
+        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+        raise SystemExit(2)
     fim_scan()
     net_scan()
     procs = list_processes()
@@ -309,6 +311,9 @@ def scan_once():
                     "tenant_id": TENANT,
                 })
     scan_count += 1
+    if AUTH_REJECTED:
+        print("[agent] credentials rejected; exiting")
+        raise SystemExit(2)
     queue.flush(_deliver_queued_record)
     print("[agent] scan complete")
 
@@ -342,4 +347,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
