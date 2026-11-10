@@ -60,7 +60,7 @@ python3 scripts/export_audit_ledger.py --out /secure/offhost/cyberguardian-audit
 Verify the manifest and snapshot before relying on them:
 
 ```bash
-python3 scripts/verify_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl
+CG_AUDIT_CHECKPOINT_KEY_HEX="$(cat /secure/offhost/cyberguardian-secrets/audit-checkpoint.key)" python3 scripts/verify_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl
 ```
 
 Perform a recovery drill on a clean, isolated controller using the independently stored checkpoint key:
