@@ -19,6 +19,7 @@ AUTH_DB = Path(os.getenv("CG_AUTH_DB") or (DATA_DIR / "dashboard_auth.sqlite3"))
 SESSION_TTL_SECONDS = max(300, int(os.getenv("CG_SESSION_TTL_SECONDS", "28800")))
 LOGIN_WINDOW_SECONDS = max(60, int(os.getenv("CG_LOGIN_WINDOW_SECONDS", "900")))
 MAX_LOGIN_FAILURES = max(3, int(os.getenv("CG_LOGIN_MAX_FAILURES", "5")))
+MAX_LOGIN_ATTEMPT_ROWS = max(1000, int(os.getenv("CG_LOGIN_ATTEMPT_MAX_ROWS", "10000")))
 PBKDF2_ITERATIONS = 310_000
 PRODUCTION = os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -182,11 +183,26 @@ def _attempt_keys(client_ip: str, username: str) -> tuple[str, str, str]:
     return pair_key, ip_key, user_key
 
 
+def _prune_login_attempts(conn: sqlite3.Connection, current: float) -> None:
+    conn.execute(
+        "DELETE FROM dashboard_login_attempts WHERE attempted_at < ?",
+        (current - LOGIN_WINDOW_SECONDS,),
+    )
+    conn.execute(
+        """DELETE FROM dashboard_login_attempts
+           WHERE rowid NOT IN (
+               SELECT rowid FROM dashboard_login_attempts
+               ORDER BY attempted_at DESC, rowid DESC LIMIT ?
+           )""",
+        (MAX_LOGIN_ATTEMPT_ROWS,),
+    )
+
+
 def is_rate_limited(client_ip: str, username: str, now: Optional[float] = None) -> bool:
     current = time.time() if now is None else float(now)
     pair_key, ip_key, user_key = _attempt_keys(client_ip, username)
     with _connect() as conn:
-        conn.execute("DELETE FROM dashboard_login_attempts WHERE attempted_at < ?", (current - LOGIN_WINDOW_SECONDS,))
+        _prune_login_attempts(conn, current)
         counts = {}
         for label, key in (("pair", pair_key), ("ip", ip_key), ("user", user_key)):
             row = conn.execute(
