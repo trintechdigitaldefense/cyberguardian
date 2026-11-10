@@ -31,6 +31,7 @@ def test_agent_enrollment_rotation_and_revocation(tmp_path):
     store = data_dir / "agent_credentials.json"
     assert store.is_file()
     assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.stat().st_mode) == 0o600
 
     initial = json.loads(store.read_text())["agents"]["host-1"]
     assert initial["status"] == "active"
@@ -40,10 +41,12 @@ def test_agent_enrollment_rotation_and_revocation(tmp_path):
     duplicate = _run(data_dir, "--asset-id", "host-1", "--tenant-id", "tenant-1")
     assert duplicate.returncode == 2
 
-    rotated = _run(data_dir, "--asset-id", "host-1", "--tenant-id", "tenant-1", "--rotate")
+    # Omitting tenant-id during rotation must not silently move the asset.
+    rotated = _run(data_dir, "--asset-id", "host-1", "--rotate")
     assert rotated.returncode == 0, rotated.stderr
     after_rotation = json.loads(store.read_text())["agents"]["host-1"]
     assert after_rotation["status"] == "active"
+    assert after_rotation["tenant_id"] == "tenant-1"
     for key in ("api_key", "identity_secret", "command_secret"):
         assert after_rotation[key] != initial[key]
 
@@ -52,7 +55,6 @@ def test_agent_enrollment_rotation_and_revocation(tmp_path):
     final = json.loads(store.read_text())["agents"]["host-1"]
     assert final["status"] == "revoked"
     assert final.get("revoked_at")
-
 
 
 def test_revoked_agent_can_be_reenrolled_with_fresh_credentials(tmp_path):
@@ -64,7 +66,7 @@ def test_revoked_agent_can_be_reenrolled_with_fresh_credentials(tmp_path):
 
     revoked = _run(data_dir, "--asset-id", "host-2", "--revoke")
     assert revoked.returncode == 0, revoked.stderr
-    blocked = _run(data_dir, "--asset-id", "host-2", "--tenant-id", "tenant-a")
+    blocked = _run(data_dir, "--asset-id", "host-2")
     assert blocked.returncode == 0, blocked.stderr
     renewed = json.loads(store.read_text())["agents"]["host-2"]
     assert renewed["status"] == "active"
@@ -72,3 +74,26 @@ def test_revoked_agent_can_be_reenrolled_with_fresh_credentials(tmp_path):
     assert renewed["api_key"] != initial["api_key"]
     assert renewed["identity_secret"] != initial["identity_secret"]
     assert renewed["command_secret"] != initial["command_secret"]
+
+
+def test_enrollment_rejects_unsafe_asset_and_tenant_identifiers(tmp_path):
+    data_dir = tmp_path / "controller-data"
+    bad_asset = _run(data_dir, "--asset-id", "../other-tenant")
+    assert bad_asset.returncode == 2
+    assert not (data_dir / "agent_credentials.json").exists()
+
+    bad_tenant = _run(data_dir, "--asset-id", "host-3", "--tenant-id", "tenant/a")
+    assert bad_tenant.returncode == 2
+    assert not (data_dir / "agent_credentials.json").exists()
+
+
+def test_corrupt_enrollment_store_is_not_treated_as_empty(tmp_path):
+    data_dir = tmp_path / "controller-data"
+    data_dir.mkdir(mode=0o700)
+    store = data_dir / "agent_credentials.json"
+    original = b'{"agents": '
+    store.write_bytes(original)
+
+    attempted = _run(data_dir, "--asset-id", "host-new", "--tenant-id", "tenant-new")
+    assert attempted.returncode != 0
+    assert store.read_bytes() == original
