@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CyberGuardian Login</title>
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+<body>
+  <div class="box">
+    <h1>Cyber<span>Guardian</span></h1>
+    <form method="post" action="/login">
+      <input type="hidden" name="login_csrf" value="{{ login_csrf }}">
+      <input name="username" placeholder="Username" autocomplete="username" required>
+      <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </div>
+</body>
+</html>
