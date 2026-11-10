@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -167,3 +168,82 @@ def export_verified_ledger(source: Path, destination: Path) -> dict[str, Any]:
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+
+
+
+def export_signed_checkpoint(source: Path, destination: Path, key: bytes) -> dict[str, Any]:
+    """Export a verified snapshot plus an HMAC-authenticated manifest.
+
+    Store the destination and checkpoint key independently from the live host.
+    The HMAC proves possession of the checkpoint key; it is not a public-key
+    signature and does not protect against compromise of that key.
+    """
+    if not isinstance(key, bytes) or len(key) < 32:
+        raise ValueError("checkpoint signing key must contain at least 32 random bytes")
+    manifest = export_verified_ledger(source, destination)
+    signed = {
+        "format": "cyberguardian-audit-checkpoint-v1",
+        **manifest,
+        "signed_at": time.time(),
+        "algorithm": "HMAC-SHA256",
+    }
+    signature = hmac.new(key, _canonical(signed), hashlib.sha256).hexdigest()
+    signed["signature"] = signature
+    manifest_path = Path(str(destination) + ".manifest.json")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=manifest_path.name + ".", suffix=".tmp", dir=str(manifest_path.parent)
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(signed, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, manifest_path)
+        os.chmod(manifest_path, 0o600)
+        dir_fd = os.open(str(manifest_path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+    return {**signed, "manifest_path": str(manifest_path)}
+
+
+def verify_signed_checkpoint(snapshot: Path, key: bytes) -> dict[str, Any]:
+    """Verify checkpoint HMAC, snapshot digest and audit-chain integrity."""
+    if not isinstance(key, bytes) or len(key) < 32:
+        raise ValueError("checkpoint signing key must contain at least 32 random bytes")
+    snapshot = Path(snapshot)
+    manifest_path = Path(str(snapshot) + ".manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("checkpoint manifest must be a JSON object")
+    signature = manifest.pop("signature", None)
+    if manifest.get("format") != "cyberguardian-audit-checkpoint-v1":
+        raise ValueError("unsupported checkpoint manifest format")
+    expected = hmac.new(key, _canonical(manifest), hashlib.sha256).hexdigest()
+    if not isinstance(signature, str) or not hmac.compare_digest(expected, signature):
+        raise LedgerIntegrityError("checkpoint manifest signature mismatch")
+    payload = snapshot.read_bytes()
+    actual_digest = hashlib.sha256(payload).hexdigest()
+    if not hmac.compare_digest(actual_digest, str(manifest.get("sha256") or "")):
+        raise LedgerIntegrityError("checkpoint snapshot digest mismatch")
+    chain = verify_ledger(snapshot)
+    if not chain["valid"]:
+        raise LedgerIntegrityError(chain["error"])
+    if chain["records"] != int(manifest.get("records", -1)) or chain["head"] != manifest.get("head"):
+        raise LedgerIntegrityError("checkpoint ledger head does not match signed manifest")
+    return {
+        "valid": True,
+        "records": chain["records"],
+        "head": chain["head"],
+        "sha256": actual_digest,
+        "manifest_path": str(manifest_path),
+    }
