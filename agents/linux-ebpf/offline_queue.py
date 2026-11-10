@@ -43,12 +43,17 @@ class OfflineQueue:
         self.flush_lock_path = self.path.with_name(self.path.name + ".flush.lock")
         self.max_records = max(1, int(max_records))
         self.max_bytes = max(1024, int(max_bytes))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock_path.touch(mode=0o600, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
-            os.chmod(self.lock_path, 0o600)
+            os.chmod(self.path.parent, 0o700)
         except OSError:
             pass
+        for lock_path in (self.lock_path, self.flush_lock_path):
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
 
     def _locked(self, lock_path: Optional[Path] = None):
         class Lock:
@@ -56,7 +61,10 @@ class OfflineQueue:
                 inner.owner = owner
                 inner.handle = None
             def __enter__(inner):
-                inner.handle = open(lock_path or inner.owner.lock_path, "a+")
+                selected = lock_path or inner.owner.lock_path
+                fd = os.open(str(selected), os.O_CREAT | os.O_RDWR, 0o600)
+                os.fchmod(fd, 0o600)
+                inner.handle = os.fdopen(fd, "a+")
                 fcntl.flock(inner.handle.fileno(), fcntl.LOCK_EX)
                 return inner
             def __exit__(inner, exc_type, exc, tb):
@@ -76,6 +84,8 @@ class OfflineQueue:
                     record = json.loads(line)
                     if isinstance(record, dict) and record.get("id"):
                         records.append(record)
+                    else:
+                        raise ValueError("queue record has an invalid schema")
                 except (ValueError, TypeError):
                     # Preserve malformed records as opaque failures instead of
                     # silently discarding data during ordinary queue reads.
@@ -112,7 +122,11 @@ class OfflineQueue:
                 pass
 
     def _write_status(self, mode: str, queued: int, **extra):
-        self.status_path.parent.mkdir(parents=True, exist_ok=True)
+        self.status_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(self.status_path.parent, 0o700)
+        except OSError:
+            pass
         data = {"mode": mode, "queued": queued, "ts": time.time(), **extra}
         fd, temp_name = tempfile.mkstemp(prefix=self.status_path.name + ".", suffix=".tmp", dir=str(self.status_path.parent))
         try:
@@ -122,6 +136,15 @@ class OfflineQueue:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, self.status_path)
+            try:
+                os.chmod(self.status_path, 0o600)
+            except OSError:
+                pass
+            dir_fd = os.open(str(self.status_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
         finally:
             try:
                 os.unlink(temp_name)
