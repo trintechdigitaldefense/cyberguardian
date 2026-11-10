@@ -262,3 +262,14 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
             and item.get("actor") == "operator-a"
             for item in denial_audit.json().get("items", [])
         ), denial_audit.text
+
+        from audit_ledger import verify_ledger
+        ledger_path = data_dir / "audit_ledger.jsonl"
+        ledger_status = verify_ledger(ledger_path)
+        assert ledger_status["valid"] is True, ledger_status
+        ledger_records = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+        assert any(
+            "operator_request_started" in str(record.get("event"))
+            and "operator-a" in str(record.get("event"))
+            for record in ledger_records
+        ), ledger_records
