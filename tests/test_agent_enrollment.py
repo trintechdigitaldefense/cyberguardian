@@ -28,6 +28,8 @@ def test_agent_enrollment_rotation_and_revocation(tmp_path):
     data_dir = tmp_path / "controller-data"
     first = _run(data_dir, "--asset-id", "host-1", "--tenant-id", "tenant-1")
     assert first.returncode == 0, first.stderr
+    assert "cg_agent_" not in first.stdout
+    assert "run_enrolled_agent.py" in first.stdout
     store = data_dir / "agent_credentials.json"
     assert store.is_file()
     assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
