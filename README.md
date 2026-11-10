@@ -71,7 +71,7 @@ SSH tunnel if remote: `ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 user@ho
 
 ## Hardened Docker Compose deployment
 
-Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash and the API keys into the ignored `data/credentials.json` file. Then create a private `deploy/docker/.env` file:
+Run `./scripts/setup_credentials.sh` first. It writes a PBKDF2 password hash, administrator and lab-bootstrap keys, and distinct dashboard, NAD, operator-assertion and decision-service secrets into the ignored `data/credentials.json` file. Copy the generated service values into a private `deploy/docker/.env` file:
 
 ```bash
 CYBERGUARDIAN_API_KEY=<the admin API key printed by setup_credentials.sh>
@@ -96,9 +96,13 @@ See [docs/HARDENING.md](docs/HARDENING.md) for the full production configuration
 
 ## Agent
 
+The shared bootstrap agent key is for a non-production lab only. For production, provision a separate API key, identity secret and command-signing secret for every asset using [docs/AGENT_ENROLLMENT.md](docs/AGENT_ENROLLMENT.md). Never reuse one device's credentials on another device.
+
+Lab-only manual startup:
+
 ```bash
 export CYBERGUARDIAN_API=http://CONTROLLER:8080
-export CYBERGUARDIAN_API_KEY="<agent_api_key>"
+export CYBERGUARDIAN_API_KEY="<lab_bootstrap_agent_key>"
 export CYBERGUARDIAN_TAGS=lab,dev   # optional; only for allowlisted auto when CM OFF
 python3 agents/linux-ebpf/agent.py --interval 60
 ```
