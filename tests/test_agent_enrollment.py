@@ -97,3 +97,40 @@ def test_corrupt_enrollment_store_is_not_treated_as_empty(tmp_path):
     attempted = _run(data_dir, "--asset-id", "host-new", "--tenant-id", "tenant-new")
     assert attempted.returncode != 0
     assert store.read_bytes() == original
+
+
+
+def test_enrollment_can_write_protected_agent_environment_file(tmp_path):
+    data_dir = tmp_path / "controller-data"
+    env_dir = tmp_path / "agent-config"
+    env_dir.mkdir(mode=0o700)
+    env_file = env_dir / "agent.env"
+
+    result = _run(
+        data_dir,
+        "--asset-id", "host-local",
+        "--tenant-id", "tenant-local",
+        "--env-file", str(env_file),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "protected environment file written" in result.stdout
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+    env_text = env_file.read_text()
+    assert "CYBERGUARDIAN_API=http://127.0.0.1:8080" in env_text
+    assert "CYBERGUARDIAN_ASSET_ID=host-local" in env_text
+    assert "CYBERGUARDIAN_TENANT=tenant-local" in env_text
+    assert "CG_AGENT_IDENTITY_SECRET=" in env_text
+    assert "CG_COMMAND_SIGNING_SECRET=" in env_text
+    assert "cg_agent_" not in result.stdout
+
+
+def test_enrollment_requires_https_for_non_loopback_controller(tmp_path):
+    result = _run(
+        tmp_path / "controller-data",
+        "--asset-id", "host-remote",
+        "--tenant-id", "tenant-remote",
+        "--api-url", "http://192.0.2.10:8080",
+    )
+    assert result.returncode == 2
+    assert "must use HTTPS" in result.stderr
+    assert not (tmp_path / "controller-data" / "agent_credentials.json").exists()
