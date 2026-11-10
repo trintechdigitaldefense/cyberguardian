@@ -21,7 +21,7 @@ R4 is the integration phase after R3 operator/service security acceptance. Each 
 
 - The offline queue remains at-least-once transport. The gateway persists replay responses for `POST /v1/detections` and `POST /v1/agent/command-result`, keyed by tenant, asset, event digest, method and path; the endpoint's SQLite work and replay record share one transaction. Do not describe the entire distributed workflow as exactly-once: external audit-ledger writes and non-idempotent endpoints still require separate recovery/duplicate analysis.
 - The local audit hash chain detects edits/truncation and accidental corruption, but a privileged attacker able to replace both application and ledger can rewrite it. Export signed checkpoints to an independently administered append-only destination.
-- The issue-memory store has a bounded 2,000-record active set and a bounded append-only archive. A formally approved retention schedule and operator-facing archive export/restore workflow remain open.
+- The issue-memory store has a bounded 2,000-record active set and a bounded append-only archive. The new `scripts/issue_archive.py` exports one tenant's archive to a private JSONL snapshot and restores only matching-tenant records without overwriting conflicting history. A formally approved retention schedule remains open.
 - CI uses disposable runners and test data. It does not simulate physical power loss, damaged flash media, Android/Termux filesystem behavior, or real network partitions.
 - Keep Client Mode enabled and all disruptive actions explicitly human-approved during pilot validation.
 
