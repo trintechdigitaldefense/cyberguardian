@@ -136,3 +136,15 @@ def test_dashboard_uses_external_assets_and_escapes_dynamic_values():
     assert "/static/login.css" in login_html
     assert ".replace(/</g,'&lt;')" in script
     assert ".replace(/'/g,'&#39;')" in script
+
+
+
+def test_login_attempt_storage_is_bounded(tmp_path, monkeypatch):
+    configure_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(auth, "MAX_LOGIN_ATTEMPT_ROWS", 5)
+    monkeypatch.setattr(auth, "LOGIN_WINDOW_SECONDS", 1000)
+    for index in range(8):
+        auth.record_login_attempt(f"192.0.2.{index + 1}", f"user-{index}", False, now=100 + index)
+    with auth._connect() as conn:
+        count = conn.execute("SELECT COUNT(*) AS n FROM dashboard_login_attempts").fetchone()["n"]
+    assert count <= 5
