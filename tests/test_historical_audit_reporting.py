@@ -100,6 +100,9 @@ def test_historical_audit_window_is_tenant_scoped_and_start_inclusive_end_exclus
         assert body["items"][0]["event"] == "tenant-a-at-start"
         assert body["items"][0]["tenant_id"] == "tenant-a"
 
+        # A later append must not change the page set pinned to the first head.
+        _seed(main, "tenant-a", "tenant-a-after-snapshot", middle + 3600)
+
         next_params = {**params, "offset": 1, "snapshot_head": body["snapshot_head"]}
         second = client.get(
             "/v1/audit/history", params=next_params,
@@ -111,6 +114,7 @@ def test_historical_audit_window_is_tenant_scoped_and_start_inclusive_end_exclus
         assert second.json()["items"][0]["event"] == "tenant-a-inside"
         assert all(item["event"] != "tenant-b-inside" for item in body["items"] + second.json()["items"])
         assert all(item["event"] != "tenant-a-at-end" for item in body["items"] + second.json()["items"])
+        assert all(item["event"] != "tenant-a-after-snapshot" for item in body["items"] + second.json()["items"])
         assert len({item["source_record_id"] for item in body["items"] + second.json()["items"]}) == 2
 
 
