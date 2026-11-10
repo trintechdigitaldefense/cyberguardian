@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import multiprocessing
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MODULE = ROOT / "agents" / "linux-ebpf" / "offline_queue.py"
+spec = importlib.util.spec_from_file_location("cg_offline_queue_test", MODULE)
+offline = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = offline
+spec.loader.exec_module(offline)
+
+
+def make_queue(tmp_path, **kwargs):
+    return offline.OfflineQueue(
+        tmp_path / "queue.jsonl",
+        status_path=tmp_path / "status.json",
+        **kwargs,
+    )
+
+
+def test_enqueue_is_durable_private_and_deduplicated(tmp_path):
+    queue = make_queue(tmp_path)
+    assert queue.enqueue("POST", "/v1/detections", {"asset_id": "a"}) == 1
+    assert queue.enqueue("POST", "/v1/detections", {"asset_id": "a"}) == 1
+    assert queue.size() == 1
+    assert queue.path.stat().st_mode & 0o777 == 0o600
+    record = json.loads(queue.path.read_text().splitlines()[0])
+    assert record["id"]
+    assert record["payload"]["asset_id"] == "a"
+
+
+def test_overflow_rejects_new_event_and_preserves_existing(tmp_path):
+    queue = make_queue(tmp_path, max_records=2, max_bytes=4096)
+    queue.enqueue("POST", "/one", {"n": 1})
+    queue.enqueue("POST", "/two", {"n": 2})
+    try:
+        queue.enqueue("POST", "/three", {"n": 3})
+    except offline.QueueFullError:
+        pass
+    else:
+        raise AssertionError("queue overflow must be explicit")
+    records = [json.loads(line) for line in queue.path.read_text().splitlines()]
+    assert [item["path"] for item in records] == ["/one", "/two"]
+    assert queue.get_status()["overflow"] is True
+
+
+def test_flush_removes_only_acknowledged_records(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.enqueue("POST", "/ack", {"n": 1})
+    queue.enqueue("POST", "/retry", {"n": 2})
+    result = queue.flush(lambda path, payload: (path == "/ack", {}), now=100)
+    assert result == {"flushed": 1, "failed": 1, "remaining": 1, "deferred": 0}
+    remaining = json.loads(queue.path.read_text().splitlines()[0])
+    assert remaining["path"] == "/retry"
+    assert remaining["attempts"] == 1
+    assert remaining["next_attempt_at"] == 105
+    # Retry is not attempted before its backoff expires.
+    called = []
+    result = queue.flush(lambda path, payload: called.append(path) or (True, {}), now=104)
+    assert called == []
+    assert result["deferred"] == 1
+    result = queue.flush(lambda path, payload: (True, {}), now=105)
+    assert result["flushed"] == 1
+    assert queue.size() == 0
+
+
+def test_flush_limit_bounds_work_and_keeps_unattempted_records(tmp_path):
+    queue = make_queue(tmp_path)
+    for n in range(5):
+        queue.enqueue("POST", f"/{n}", {"n": n})
+    result = queue.flush(lambda path, payload: (True, {}), now=100, limit=2)
+    assert result["flushed"] == 2
+    assert result["remaining"] == 3
+    assert result["deferred"] == 3
+
+
+def _enqueue_worker(path: str, status: str, start: int):
+    queue = offline.OfflineQueue(Path(path), status_path=Path(status), max_records=100)
+    for n in range(start, start + 10):
+        queue.enqueue("POST", "/event", {"n": n})
+
+
+def test_concurrent_writers_do_not_overwrite_each_other(tmp_path):
+    path = tmp_path / "queue.jsonl"
+    status = tmp_path / "status.json"
+    workers = [
+        multiprocessing.Process(target=_enqueue_worker, args=(str(path), str(status), i * 10))
+        for i in range(4)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+        assert worker.exitcode == 0
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == 40
+    assert len({item["id"] for item in records}) == 40
+
+
+def test_corrupt_records_are_retained_for_operator_inspection(tmp_path):
+    queue = make_queue(tmp_path)
+    queue.path.write_text("{not-json}\n")
+    result = queue.flush(lambda path, payload: (True, {}), now=100)
+    assert result["failed"] == 1
+    assert queue.size() == 1
+    assert "_corrupt_line" in json.loads(queue.path.read_text().splitlines()[0])
