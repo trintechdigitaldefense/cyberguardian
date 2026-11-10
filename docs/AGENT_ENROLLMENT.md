@@ -58,6 +58,20 @@ Set the controller URL and all values printed by the enrollment script:
 
 Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
 
+### Running the enrolled agent on the controller device
+
+If the controller and agent run on the same Linux/Termux device, configure startup to use the enrolled environment file:
+
+```sh
+chmod 600 /path/to/agent.env
+export CG_AGENT_ENV_FILE=/path/to/agent.env
+export CG_PRODUCTION=1
+export CG_REQUIRE_AGENT_IDENTITY=1
+./start.sh
+```
+
+When production identity enforcement is enabled, `start.sh` will not fall back to the shared bootstrap agent key. It starts the local agent only when `CG_AGENT_ENV_FILE` points to a regular file with no group/other permissions and the required per-agent secrets are present. Without that file, the controller services can start, but the local agent is deliberately skipped. For a non-production lab only, the legacy bootstrap agent remains available.
+
 ## 4. Verify enrollment
 
 - Start the agent and confirm registration succeeds.
