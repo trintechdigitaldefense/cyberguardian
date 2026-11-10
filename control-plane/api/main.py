@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, urlencode
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from agent_credentials import active_agent_api_keys, find_agent_by_api_key, get_agent_credential
+from agent_credentials import active_agent_api_keys, find_agent_by_api_key, get_agent_credential, load_agent_credentials
 from command_signing import sign_envelope
 from audit_ledger import append_event as _append_audit_ledger_event
 from fleet_lifecycle import project_fleet_lifecycle
@@ -236,8 +236,9 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
     if path == "/v1/fleet":
         # Enrollment revocation is authoritative even if the last heartbeat
         # left the inventory row marked online.
+        enrolled_credentials = load_agent_credentials()
         for item in filtered:
-            credential = get_agent_credential(str(item.get("asset_id") or ""), include_revoked=True)
+            credential = enrolled_credentials.get(str(item.get("asset_id") or ""))
             if credential and str(credential.get("status") or "").lower() in {"revoked", "disabled"}:
                 item["status"] = str(credential["status"]).lower()
         try:
