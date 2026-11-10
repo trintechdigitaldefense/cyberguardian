@@ -49,19 +49,19 @@ Credential setup provisions a separate 256-bit HMAC checkpoint key as `audit_che
 Create a verified signed checkpoint on an independently mounted destination:
 
 ```bash
-python3 scripts/export_audit_ledger.py --out /secure/offhost/cyberguardian-audit.jsonl --checkpoint-dir /secure/offhost/checkpoints
+python3 scripts/export_audit_ledger.py --out /secure/offhost/cyberguardian-audit.jsonl
 ```
 
 Verify the manifest and snapshot before relying on them:
 
 ```bash
-python3 scripts/verify_audit_checkpoint.py --manifest /secure/offhost/checkpoints/<manifest>.json
+python3 scripts/verify_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl
 ```
 
 Perform a recovery drill on a clean, isolated controller using the independently stored checkpoint key:
 
 ```bash
-python3 scripts/restore_audit_checkpoint.py --manifest /secure/offhost/checkpoints/<manifest>.json --out /var/lib/cyberguardian/audit-ledger.jsonl
+CG_AUDIT_CHECKPOINT_KEY_HEX="<original-checkpoint-key>" python3 scripts/restore_audit_checkpoint.py --snapshot /secure/offhost/cyberguardian-audit.jsonl --destination /var/lib/cyberguardian/audit_ledger.jsonl
 ```
 
 Record the source commit, checkpoint timestamp, verification output, restore output and independent storage location in the pilot evidence pack. A local checkpoint alone is not an off-host backup or a completed restore drill.
