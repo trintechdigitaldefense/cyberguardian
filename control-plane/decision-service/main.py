@@ -32,6 +32,12 @@ app = FastAPI(
 )
 
 
+@app.on_event("startup")
+async def validate_internal_service_credential():
+    if PRODUCTION and len(SERVICE_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("production decision-service credential must be at least 32 bytes")
+
+
 @app.middleware("http")
 async def require_internal_service_auth(request: Request, call_next):
     if not request.url.path.startswith("/v1/"):
