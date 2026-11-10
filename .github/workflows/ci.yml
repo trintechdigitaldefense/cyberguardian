@@ -27,6 +27,8 @@ jobs:
           test -s control-plane/api/main_full.py
       - name: Run automated tests
         run: python -m pytest tests/ -q --tb=short
+      - name: Validate shell entrypoints
+        run: bash -n start.sh status.sh stop.sh scripts/setup_credentials.sh scripts/enroll_agent.py
       - name: Compile application modules
         run: |
           python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/test_containment_namespace.py
