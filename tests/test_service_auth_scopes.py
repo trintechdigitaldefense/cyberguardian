@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import time
 from pathlib import Path
 
 API_DIR = Path(__file__).resolve().parents[1] / "control-plane" / "api"
@@ -107,6 +108,22 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
                 "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
                 ("asset-tenant-b", "tenant-b", "host-b"),
             )
+            conn.execute(
+                "INSERT OR REPLACE INTO assets(asset_id, tenant_id, hostname) VALUES (?, ?, ?)",
+                ("asset-tenant-a-stale", "tenant-a", "host-a-stale"),
+            )
+            conn.execute(
+                "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
+                (time.time(), "asset-tenant-a"),
+            )
+            conn.execute(
+                "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
+                (time.time() - 3600, "asset-tenant-a-stale"),
+            )
+            conn.execute(
+                "UPDATE assets SET last_seen=?, status='online' WHERE asset_id=?",
+                (time.time(), "asset-tenant-b"),
+            )
         main._mod.queue_agent_command(
             asset_id="asset-tenant-b",
             action="isolate_host",
@@ -148,6 +165,11 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
         fleet_items = authorized.json().get("items", [])
         assert any(item.get("asset_id") == "asset-tenant-a" for item in fleet_items), authorized.text
         assert not any(item.get("asset_id") == "asset-tenant-b" for item in fleet_items), authorized.text
+        fresh_asset = next(item for item in fleet_items if item.get("asset_id") == "asset-tenant-a")
+        stale_asset = next(item for item in fleet_items if item.get("asset_id") == "asset-tenant-a-stale")
+        assert fresh_asset["lifecycle"] == "online", authorized.text
+        assert stale_asset["lifecycle"] == "offline", authorized.text
+        assert stale_asset["stale"] is True, authorized.text
 
         audit_assertion = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
