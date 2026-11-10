@@ -50,3 +50,19 @@ def test_fleet_projection_does_not_mutate_source_records():
     projected = fleet.project_fleet_lifecycle(source, now=1000, stale_after_seconds=30)
     assert source[0]["status"] == "online"
     assert projected[0]["status"] == "offline"
+
+
+
+def test_revoked_and_disabled_states_survive_missing_heartbeat_timestamps():
+    result = fleet.project_fleet_lifecycle(
+        [
+            {"asset_id": "revoked-no-heartbeat", "status": "revoked", "last_seen": None},
+            {"asset_id": "disabled-no-heartbeat", "status": "disabled", "last_seen": None},
+        ],
+        now=1000,
+        stale_after_seconds=60,
+    )
+    assert result[0]["lifecycle"] == "revoked"
+    assert result[0]["status"] == "revoked"
+    assert result[1]["lifecycle"] == "disabled"
+    assert result[1]["status"] == "disabled"
