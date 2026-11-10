@@ -293,6 +293,62 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
         )
         assert denied_gate_override.status_code == 403
 
+        # Positive approval/rejection paths must require a verified operator
+        # assertion and persist an auditable decision for the tenant's action.
+        main._mod.queue_agent_command(
+            asset_id="asset-tenant-a",
+            action="isolate_host",
+            target="asset-tenant-a",
+            parameters={"reason": "R4 supervised approval test"},
+            pending_action_id="pending-tenant-a-approve",
+            ttl_seconds=300,
+        )
+        approve_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST",
+            path="/v1/gate/approve/pending-tenant-a-approve",
+            request_id="integration-gate-approve",
+        )
+        approved = client.post(
+            "/v1/gate/approve/pending-tenant-a-approve",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": approve_assertion},
+        )
+        assert approved.status_code == 200, approved.text
+        with main._mod.db() as conn:
+            approved_row = conn.execute(
+                "SELECT status FROM agent_commands WHERE pending_action_id=?",
+                ("pending-tenant-a-approve",),
+            ).fetchone()
+        assert approved_row is not None
+        assert str(approved_row["status"]).lower() in {"queued", "approved", "delivered"}
+
+        main._mod.queue_agent_command(
+            asset_id="asset-tenant-a",
+            action="isolate_host",
+            target="asset-tenant-a",
+            parameters={"reason": "R4 supervised rejection test"},
+            pending_action_id="pending-tenant-a-reject",
+            ttl_seconds=300,
+        )
+        reject_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST",
+            path="/v1/gate/reject/pending-tenant-a-reject",
+            request_id="integration-gate-reject",
+        )
+        rejected = client.post(
+            "/v1/gate/reject/pending-tenant-a-reject",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": reject_assertion},
+        )
+        assert rejected.status_code == 200, rejected.text
+        with main._mod.db() as conn:
+            rejected_row = conn.execute(
+                "SELECT status FROM agent_commands WHERE pending_action_id=?",
+                ("pending-tenant-a-reject",),
+            ).fetchone()
+        assert rejected_row is not None
+        assert str(rejected_row["status"]).lower() in {"rejected", "cancelled", "denied"}
+
         denial_audit_assertion = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
             tenant_id="tenant-a", method="GET", path="/v1/audit",
