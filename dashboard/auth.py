@@ -230,7 +230,7 @@ def record_login_attempt(client_ip: str, username: str, success: bool, now: Opti
                 "INSERT INTO dashboard_login_attempts(attempt_key, attempted_at, success) VALUES (?, ?, 0)",
                 [(ip_key, current), (user_key, current)],
             )
-        conn.execute("DELETE FROM dashboard_login_attempts WHERE attempted_at < ?", (current - LOGIN_WINDOW_SECONDS,))
+        _prune_login_attempts(conn, current)
         if success:
             conn.execute(
                 "DELETE FROM dashboard_login_attempts WHERE attempt_key IN (?, ?)",
