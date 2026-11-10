@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import hashlib
 import json
 import os
 import socket
@@ -16,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from offline_queue import OfflineQueue
 from containment import execute_command
+from command_crypto import verify_command, claim_command
 
 try:
     import fim as _fim
@@ -27,9 +29,10 @@ except ImportError:
     _net = None
 
 API = os.environ.get("CYBERGUARDIAN_API") or os.environ.get("CG_CONTROLLER_URL") or "http://127.0.0.1:8080"
-KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or ""
+KEY = os.environ.get("CYBERGUARDIAN_API_KEY") or os.environ.get("CG_AGENT_API_KEY") or ""
 ASSET = os.environ.get("CYBERGUARDIAN_ASSET_ID") or f"linux-{socket.gethostname()}"
 TENANT = os.environ.get("CYBERGUARDIAN_TENANT") or "default"
+PROC_ROOT = Path("/proc")
 VERSION = "1.5.0-strength"
 
 queue = OfflineQueue()
@@ -37,14 +40,36 @@ baseline_names: set = set()
 scan_count = 0
 _net_seen: set = set()
 _fim_ready = False
+AUTH_REJECTED = False
 
 SUSPICIOUS = {"mimikatz", "powershell -enc", "nc.exe", "ncat", "meterpreter", "cobaltstrike"}
 
 
-def cg_api_post(path: str, payload: dict, timeout: int = 10):
+def cg_api_post(
+    path: str,
+    payload: dict,
+    timeout: int = 10,
+    *,
+    queue_on_failure: bool = True,
+    idempotency_key: str | None = None,
+):
     url = API.rstrip("/") + path
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": KEY}, method="POST")
+    if idempotency_key is None:
+        canonical = json.dumps(
+            {"kind": "POST", "path": path, "payload": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        idempotency_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": KEY,
+        "X-Tenant-ID": TENANT,
+        "X-CG-Event-ID": idempotency_key,
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -52,15 +77,41 @@ def cg_api_post(path: str, payload: dict, timeout: int = 10):
                 return True, json.loads(body)
             except Exception:
                 return True, {"raw": body}
+    except urllib.error.HTTPError as e:
+        global AUTH_REJECTED
+        if e.code in (401, 403):
+            AUTH_REJECTED = True
+            print(f"[agent] POST {path} rejected by controller (HTTP {e.code}); credentials may be revoked or invalid")
+            return False, {"auth_error": e.code}
+        if e.code < 500 and e.code not in (408, 425, 429):
+            print(f"[agent] POST {path} rejected permanently (HTTP {e.code}); not queued")
+            return False, {"http_error": e.code}
+        if not queue_on_failure:
+            print(f"[agent] POST {path} unavailable (HTTP {e.code}); it will be retried with fresh state")
+            return False, {"http_error": e.code}
+        try:
+            queued = queue.enqueue("POST", path, payload)
+            print(f"[agent] POST {path} failed — queued ({queued} pending): HTTP {e.code}")
+        except Exception as queue_error:
+            print(f"[agent] POST {path} failed and offline queue rejected the event: {queue_error}")
+        return False, {"http_error": e.code}
     except Exception as e:
-        queue.enqueue("POST", path, payload)
-        print(f"[agent] POST {path} failed — queued: {e}")
+        if not queue_on_failure:
+            print(f"[agent] POST {path} failed; it will be retried with fresh state on the next heartbeat: {e}")
+            return False, {}
+        try:
+            queued = queue.enqueue("POST", path, payload)
+            print(f"[agent] POST {path} failed — queued ({queued} pending): {e}")
+        except Exception as queue_error:
+            # Preserve existing unacknowledged events on overflow; never silently
+            # evict old telemetry to make room for a newer record.
+            print(f"[agent] POST {path} failed and offline queue rejected the event: {queue_error}")
         return False, {}
 
 
 def cg_api_get(path: str, timeout: int = 10):
     url = API.rstrip("/") + path
-    req = urllib.request.Request(url, headers={"X-API-Key": KEY}, method="GET")
+    req = urllib.request.Request(url, headers={"X-API-Key": KEY, "X-Tenant-ID": TENANT}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -68,6 +119,14 @@ def cg_api_get(path: str, timeout: int = 10):
                 return True, json.loads(body)
             except Exception:
                 return True, {"raw": body}
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            global AUTH_REJECTED
+            AUTH_REJECTED = True
+            print(f"[agent] GET {path} rejected by controller (HTTP {e.code}); stopping agent activity")
+        else:
+            print(f"[agent] GET {path} failed (HTTP {e.code})")
+        return False, {"http_error": e.code}
     except Exception as e:
         print(f"[agent] GET {path} failed: {e}")
         return False, {}
@@ -105,51 +164,84 @@ def register():
         "asset_id": ASSET, "hostname": hostname, "asset_type": "endpoint", "os": os_info,
         "tags": tags, "agent_version": VERSION, "tenant_id": TENANT,
         "machine_id": mid, "fingerprint": fp, "identity_ts": ts, "identity_sig": sig,
-    })
+    }, queue_on_failure=False)
     print("[agent] registered →", data.get("status") if isinstance(data, dict) else data)
     return ok
 
 
 def heartbeat():
-    cg_api_post("/v1/assets/register", {
-        "asset_id": ASSET, "hostname": socket.gethostname(), "asset_type": "endpoint",
-        "os": f"linux-{os.uname().release if hasattr(os, 'uname') else 'unknown'}",
-        "tags": ["linux", "smart-agent", f"v{VERSION}"], "agent_version": VERSION, "tenant_id": TENANT,
-    })
+    # Registration carries the signed fingerprint envelope; do not send an
+    # unsigned partial registration as a heartbeat.
+    return register()
+
+
+def _proc_start_time(pid: str) -> str:
+    try:
+        stat_text = (PROC_ROOT / str(pid) / "stat").read_text(encoding="utf-8")
+        close = stat_text.rfind(")")
+        if close < 0:
+            return ""
+        fields = stat_text[close + 2 :].split()
+        return fields[19] if len(fields) > 19 else ""
+    except (OSError, ValueError, IndexError):
+        return ""
 
 
 def list_processes():
     procs = []
     try:
-        for pid in os.listdir("/proc"):
+        for pid in os.listdir(str(PROC_ROOT)):
             if not pid.isdigit():
                 continue
             try:
-                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore").strip()
+                proc = PROC_ROOT / pid
+                cmd = (proc / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore").strip()
                 if not cmd:
-                    cmd = Path(f"/proc/{pid}/comm").read_text(errors="ignore").strip()
-                procs.append({"pid": pid, "cmd": cmd})
+                    cmd = (proc / "comm").read_text(errors="ignore").strip()
+                procs.append({"pid": pid, "cmd": cmd, "start_time": _proc_start_time(pid)})
             except Exception:
                 continue
     except Exception:
         pass
     return procs
 
-
 def poll_and_execute_commands():
     ok, data = cg_api_get(f"/v1/agent/commands?asset_id={ASSET}")
     if not ok or not isinstance(data, dict):
         return
     for cmd in data.get("commands") or []:
-        cmd_id = cmd.get("id")
-        action = cmd.get("action")
-        print(f"[agent] executing {action} id={cmd_id}")
+        cmd_id = str(cmd.get("id") or cmd.get("command_id") or "")
+        action = str(cmd.get("action") or "")
+        valid, reason = verify_command(
+            cmd,
+            expected_asset_id=ASSET,
+            expected_tenant_id=TENANT,
+        )
+        if not valid:
+            print(f"[agent] rejected invalid command id={cmd_id}: {reason}")
+            if cmd_id:
+                cg_api_post("/v1/agent/command-result", {
+                    "command_id": cmd_id, "asset_id": ASSET, "action": action,
+                    "target": cmd.get("target"), "ok": False,
+                    "detail": f"command rejected before execution: {reason}",
+                    "result": {"rejected": True, "reason": reason},
+                })
+            continue
+        if not claim_command(cmd):
+            print(f"[agent] rejected replayed command id={cmd_id}")
+            cg_api_post("/v1/agent/command-result", {
+                "command_id": cmd_id, "asset_id": ASSET, "action": action,
+                "target": cmd.get("target"), "ok": False,
+                "detail": "command replay rejected",
+                "result": {"rejected": True, "reason": "replay"},
+            })
+            continue
+        print(f"[agent] executing verified command {action} id={cmd_id}")
         result = execute_command(cmd, controller_url=API)
         cg_api_post("/v1/agent/command-result", {
             "command_id": cmd_id, "asset_id": ASSET, "action": action, "target": cmd.get("target"),
             "ok": bool(result.get("ok")), "detail": result.get("detail") or "", "result": result,
         })
-
 
 def fim_scan():
     global _fim_ready
@@ -195,10 +287,32 @@ def net_scan():
         print(f"[agent] netwatch error: {e}")
 
 
+def _deliver_queued_record(path: str, payload: dict, record_id: str | None = None):
+    # Registrations double as heartbeats and contain a short-lived HMAC
+    # timestamp. Old queued registrations expire; a fresh heartbeat is sent
+    # every scan, so acknowledge legacy queued copies instead of retrying them
+    # forever after reconnect.
+    if path == "/v1/assets/register":
+        return True, {"status": "superseded_by_fresh_heartbeat"}
+    return cg_api_post(path, payload, idempotency_key=record_id)
+
+
 def scan_once():
     global scan_count, baseline_names
-    poll_and_execute_commands()
-    heartbeat()
+    # Refresh signed registration before polling commands. If the controller
+    # is temporarily unavailable, defer the GET rather than treating an
+    # unregistered asset's 403 as a revoked credential.
+    heartbeat_ok = heartbeat()
+    if AUTH_REJECTED:
+        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+        raise SystemExit(2)
+    if heartbeat_ok:
+        poll_and_execute_commands()
+        if AUTH_REJECTED:
+            print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+            raise SystemExit(2)
+    else:
+        print("[agent] command polling deferred until registration/heartbeat succeeds")
     fim_scan()
     net_scan()
     procs = list_processes()
@@ -220,12 +334,15 @@ def scan_once():
                 cg_api_post("/v1/detections", {
                     "source": "linux-agent", "asset_id": ASSET, "severity": "high", "confidence": 0.9,
                     "title": title, "description": f"Matched indicator '{s}' in process",
-                    "indicators": {"pid": p["pid"], "cmdline": p["cmd"][:200]},
+                    "indicators": {"pid": p["pid"], "cmdline": p["cmd"][:200], "cmdline_hint": p["cmd"][:200], "expected_starttime": p.get("start_time") or ""},
                     "tags": ["suspicious_process", "credential_access"] if "mimikatz" in s else ["suspicious_process"],
                     "tenant_id": TENANT,
                 })
     scan_count += 1
-    queue.flush(lambda path, payload: cg_api_post(path, payload)[0:2])
+    if AUTH_REJECTED:
+        print("[agent] credentials rejected; exiting")
+        raise SystemExit(2)
+    queue.flush(_deliver_queued_record)
     print("[agent] scan complete")
 
 
@@ -238,16 +355,24 @@ def main():
         print("[agent] WARNING: CYBERGUARDIAN_API_KEY not set")
     print(f"[agent] API={API} asset={ASSET} version={VERSION}")
     register()
+    if AUTH_REJECTED:
+        print("[agent] credentials rejected; stop and re-enroll or rotate this device")
+        return 2
     if args.once:
         scan_once()
         return
     while True:
         try:
             scan_once()
+        except SystemExit:
+            raise
         except Exception as e:
             print(f"[agent] loop error: {e}")
+        if AUTH_REJECTED:
+            print("[agent] credentials rejected; exiting")
+            return 2
         time.sleep(max(10, args.interval))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

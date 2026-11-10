@@ -1,37 +1,238 @@
 name: CI
-
 on:
   push:
-    branches: [main]
+    branches: [main, "r2-*"]
   pull_request:
-    branches: [main]
+    branches: [main, "r2-*"]
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Install project and test dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest || true
-      - name: Compile Python sources
+          python -m pip install -r requirements.txt -r dashboard/requirements.txt -r control-plane/decision-service/requirements.txt pytest
+      - name: Assemble and verify canonical gateway
         run: |
-          find . -name "*.py" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./dashboard/*" | while read f; do
-            python -m py_compile "$f" || exit 1
+          python control-plane/api/assemble_main.py
+          test -s control-plane/api/main_full.py
+      - name: Run automated tests
+        run: python -m pytest tests/ -q --tb=short
+      - name: Validate shell entrypoints
+        run: bash -n start.sh status.sh stop.sh scripts/setup_credentials.sh
+      - name: Compile application modules
+        run: |
+          python -m py_compile control-plane/api/main.py control-plane/api/operator_context.py control-plane/api/service_auth.py control-plane/api/runtime_paths.py control-plane/api/agent_credentials.py control-plane/api/command_signing.py control-plane/api/agent_identity.py agents/linux-ebpf/agent.py agents/linux-ebpf/containment.py agents/linux-ebpf/offline_queue.py agents/linux-ebpf/command_crypto.py control-plane/decision-service/main.py control-plane/nad-processor/main.py dashboard/main.py dashboard/user_admin.py scripts/manage_dashboard_user.py dashboard/auth.py scripts/enroll_agent.py scripts/run_enrolled_agent.py scripts/export_audit_checkpoint_key.py scripts/weekly_client_pdf.py control-plane/api/issue_memory.py control-plane/api/audit_ledger.py scripts/test_containment_namespace.py
+
+  docker-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build --pull -t cyberguardian-api:ci control-plane/api
+      - name: Start container smoke test
+        run: |
+          docker run -d --name cg-api -p 18080:8080 cyberguardian-api:ci
+          for i in $(seq 1 30); do
+            code=$(curl --connect-timeout 1 --max-time 2 -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/health || true)
+            if [ "$code" = "200" ]; then
+              echo "API health check passed"
+              exit 0
+            fi
+            sleep 1
           done
-      - name: Run pytest if tests exist
+          docker logs cg-api || true
+          exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f cg-api || true
+
+  compose-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot isolated production-mode Compose stack
+        shell: bash
         run: |
-          if [ -d tests ] || [ -d test ]; then
-            pytest -q
-          else
-            echo "No tests/ directory — compile-only check passed"
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE"
+          DATA_DIR="$(mktemp -d)"
+          PROJECT="cg-compose-ci"
+          cleanup() {
+            (cd "$ROOT/deploy/docker" && docker compose -p "$PROJECT" down --volumes --remove-orphans) || true
+            rm -rf "$DATA_DIR"
+          }
+          trap cleanup EXIT
+          export CG_DATA_HOST_DIR="$DATA_DIR"
+          export CG_PRODUCTION=1
+          export CG_REQUIRE_AGENT_IDENTITY=1
+          export CG_COOKIE_SECURE=1
+          export CG_TRUSTED_PROXY_IPS=""
+          export CG_ALLOWED_ORIGINS="https://testserver"
+          export CYBERGUARDIAN_API_KEY="admin-$(openssl rand -hex 32)"
+          export CG_DASHBOARD_API_KEY="dashboard-$(openssl rand -hex 32)"
+          export CG_NAD_API_KEY="nad-$(openssl rand -hex 32)"
+          export CG_OPERATOR_ASSERTION_SECRET="$(openssl rand -hex 32)"
+          export DECISION_SERVICE_API_KEY="decision-$(openssl rand -hex 32)"
+          python3 - "$DATA_DIR" "$CYBERGUARDIAN_API_KEY" <<'PY'
+          import base64, hashlib, json, secrets, sys
+          from pathlib import Path
+          data = Path(sys.argv[1])
+          password = "Compose-CI-Integration-Password-2026!"
+          salt = secrets.token_bytes(16)
+          rounds = 310_000
+          digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
+          encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+          record = {
+              "admin_user": "compose-ci-admin",
+              "admin_password_hash": f"pbkdf2_sha256${rounds}${encode(salt)}${encode(digest)}",
+              "api_key": sys.argv[2],
+              "agent_api_key": "compose-agent-" + secrets.token_urlsafe(24),
+              "audit_checkpoint_key_hex": secrets.token_hex(32),
+          }
+          target = data / "credentials.json"
+          target.write_text(json.dumps(record), encoding="utf-8")
+          target.chmod(0o600)
+          PY
+          cd deploy/docker
+          docker compose -p "$PROJECT" up -d --build
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:8080/health >/dev/null \
+              && curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:3000/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            docker compose -p "$PROJECT" ps
+            docker compose -p "$PROJECT" logs --no-color
+            exit 1
           fi
+          internal_ready=0
+          for _ in $(seq 1 30); do
+            if docker compose -p "$PROJECT" exec -T api python -c "import urllib.request; assert urllib.request.urlopen('http://decision-service:8001/health', timeout=5).status == 200; assert urllib.request.urlopen('http://nad-processor:8002/health', timeout=5).status == 200"; then
+              internal_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$internal_ready" != "1" ]; then
+            docker compose -p "$PROJECT" logs --no-color
+            exit 1
+          fi
+          docker compose -p "$PROJECT" exec -T dashboard python - <<'PY'
+          import re
+          from fastapi.testclient import TestClient
+          from main import app, CSRF_COOKIE
+          password = "Compose-CI-Integration-Password-2026!"
+          with TestClient(app, base_url="https://testserver", follow_redirects=False) as client:
+              page = client.get("/login")
+              assert page.status_code == 200
+              assert "unsafe-inline" not in page.headers.get("content-security-policy", "")
+              assert page.headers.get("strict-transport-security")
+              assert "secure" in page.headers.get("set-cookie", "").lower()
+              csrf_login = re.search(r'name="login_csrf" value="([^"]+)"', page.text).group(1)
+              bad_login = client.post("/login", data={
+                  "username": "compose-ci-admin", "password": password, "login_csrf": "invalid"
+              })
+              assert bad_login.status_code == 403
+              login = client.post("/login", data={
+                  "username": "compose-ci-admin", "password": password, "login_csrf": csrf_login
+              })
+              assert login.status_code == 303
+              csrf = client.cookies.get(CSRF_COOKIE)
+              assert client.get("/").status_code == 200
+              assert client.get("/ops/fleet").status_code == 200
+              assert client.get("/ops/audit").status_code == 200
+              mode = client.post("/ops/client-mode", json={"client_mode": True},
+                                 headers={"X-CSRF-Token": csrf})
+              assert mode.status_code == 200, mode.text
+              assert client.post("/ops/client-mode", json={"client_mode": False}).status_code == 403
+              audit = client.get("/ops/audit")
+              assert audit.status_code == 200
+              assert any(item.get("actor") == "compose-ci-admin" for item in audit.json().get("items", []))
+              assert client.post("/logout", headers={"X-CSRF-Token": csrf}).status_code == 303
+              assert client.get("/ops/fleet").status_code == 401
+          PY
+          docker compose -p "$PROJECT" exec -T api python - <<'PY'
+          import os
+          import time
+          import secrets
+          import httpx
+          import agent_credentials
+          import agent_identity
+
+          base = "http://127.0.0.1:8080"
+          agent = {
+              "tenant_id": "default",
+              "api_key": "compose-agent-" + secrets.token_urlsafe(32),
+              "identity_secret": secrets.token_urlsafe(32),
+              "command_secret": secrets.token_urlsafe(32),
+              "status": "active",
+          }
+          agent_credentials.write_agent_credentials({"compose-host": agent})
+          fingerprint = agent_identity.host_fingerprint("compose-host", "linux-test", "compose-machine")
+          identity_ts = time.time()
+          identity_sig = agent_identity.sign_registration("compose-host", fingerprint, identity_ts)
+
+          with httpx.Client(timeout=5.0) as client:
+              nad_read = client.get(base + "/v1/fleet", headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]})
+              assert nad_read.status_code == 403, nad_read.text
+              dashboard_agent = client.get(
+                  base + "/v1/agent/commands?asset_id=compose-host",
+                  headers={"X-API-Key": os.environ["CG_DASHBOARD_API_KEY"], "X-Tenant-ID": "default"},
+              )
+              assert dashboard_agent.status_code == 403, dashboard_agent.text
+              registered = client.post(
+                  base + "/v1/assets/register",
+                  headers={"X-API-Key": agent["api_key"], "X-Tenant-ID": "default"},
+                  json={
+                      "asset_id": "compose-host", "tenant_id": "default",
+                      "hostname": "compose-host", "os": "linux-test",
+                      "machine_id": "compose-machine", "fingerprint": fingerprint,
+                      "identity_ts": identity_ts, "identity_sig": identity_sig,
+                  },
+              )
+              assert registered.status_code == 200, registered.text
+              detection = client.post(
+                  base + "/v1/detections",
+                  headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]},
+                  json={"asset_id": "compose-host", "source": "nad-processor",
+                        "severity": "medium", "confidence": 0.5, "title": "CI detection",
+                        "description": "Non-destructive service-scope acceptance", "indicators": {}, "tags": []},
+              )
+              assert 200 <= detection.status_code < 300, detection.text
+              no_decision_key = client.get("http://decision-service:8001/v1/protection")
+              assert no_decision_key.status_code == 401, no_decision_key.text
+              decision_ok = client.get(
+                  "http://decision-service:8001/v1/protection",
+                  headers={"X-Decision-Service-Key": os.environ["DECISION_SERVICE_API_KEY"]},
+              )
+              assert decision_ok.status_code == 200, decision_ok.text
+          PY
+          docker compose -p "$PROJECT" exec -T dashboard python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_NAD_API_KEY' not in os.environ"
+          docker compose -p "$PROJECT" exec -T nad-processor python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_DASHBOARD_API_KEY' not in os.environ"
+          docker compose -p "$PROJECT" ps
+  containment-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated firewall test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iptables
+      - name: Exercise nftables in disposable network namespace
+        run: sudo python3 scripts/test_containment_namespace.py
+      - name: Exercise iptables fallback in disposable network namespace
+        run: sudo env CG_FORCE_IPTABLES=1 python3 scripts/test_containment_namespace.py

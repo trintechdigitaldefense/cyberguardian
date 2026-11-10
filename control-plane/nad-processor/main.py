@@ -1,13 +1,19 @@
 """NAD Processor — anomaly simulation helpers for pilot/testing."""
 from datetime import datetime, timezone
 from typing import Any, Dict
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import httpx, os
 
 app = FastAPI(title="CyberGuardian NAD", version="1.0.0-detect")
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
-API_KEY = os.getenv("CYBERGUARDIAN_API_KEY", "")
+API_KEY = os.getenv("CG_NAD_API_KEY", "")
+PRODUCTION = os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+@app.on_event("startup")
+async def validate_nad_credentials():
+    if PRODUCTION and len(API_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("production NAD service credential must be at least 32 bytes")
 
 class SimulatedAnomaly(BaseModel):
     asset_id: str
@@ -55,6 +61,10 @@ async def emit(asset_id: str, anomaly: dict):
 
 @app.post("/v1/simulate")
 async def simulate(payload: SimulatedAnomaly, background_tasks: BackgroundTasks):
+    # This endpoint creates synthetic detections and is a lab/pilot helper only.
+    # Production NAD accepts no unauthenticated simulation requests.
+    if PRODUCTION:
+        raise HTTPException(status_code=404, detail="simulation endpoint is disabled in production")
     anomaly = TEMPLATES.get(payload.anomaly_type, TEMPLATES["suspicious_process"])
     background_tasks.add_task(emit, payload.asset_id, anomaly)
     return {"status": "simulated", "anomaly": anomaly}

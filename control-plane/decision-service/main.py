@@ -3,6 +3,8 @@ CyberGuardian Decision Service v1.5.0-tier1 — risk scoring + playbooks + evide
 """
 from __future__ import annotations
 
+import hmac
+import os
 import time
 import uuid
 import logging
@@ -10,7 +12,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from playbooks import match_playbook
@@ -18,7 +21,36 @@ from playbooks import match_playbook
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decision-service")
 
-app = FastAPI(title="CyberGuardian Decision Service", version="1.5.0-tier1")
+PRODUCTION = os.getenv("CG_PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+SERVICE_KEY = os.getenv("DECISION_SERVICE_API_KEY", "").strip()
+app = FastAPI(
+    title="CyberGuardian Decision Service",
+    version="1.5.0-tier1",
+    docs_url=None if PRODUCTION else "/docs",
+    redoc_url=None,
+    openapi_url=None if PRODUCTION else "/openapi.json",
+)
+
+
+@app.on_event("startup")
+async def validate_internal_service_credential():
+    if PRODUCTION and len(SERVICE_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("production decision-service credential must be at least 32 bytes")
+
+
+@app.middleware("http")
+async def require_internal_service_auth(request: Request, call_next):
+    if not request.url.path.startswith("/v1/"):
+        return await call_next(request)
+    if not SERVICE_KEY:
+        if PRODUCTION:
+            return JSONResponse({"detail": "decision-service authentication is not configured"}, status_code=503)
+        return await call_next(request)
+    supplied = request.headers.get("X-Decision-Service-Key", "")
+    if not hmac.compare_digest(supplied, SERVICE_KEY):
+        return JSONResponse({"detail": "invalid or missing service credential"}, status_code=401)
+    return await call_next(request)
+
 
 PROTECTION_MODE = True  # enforce staged/executed actions when approved
 
@@ -73,9 +105,15 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
     actions: List[ActionRequest] = []
     pb = match_playbook(det.title, det.tags)
     pid = str(det.indicators.get("pid") or det.indicators.get("process_id") or "")
+    cmdline_hint = str(det.indicators.get("cmdline_hint") or det.indicators.get("cmdline") or "")
+    expected_starttime = str(det.indicators.get("expected_starttime") or det.indicators.get("start_time") or "")
     if pb:
         for step in pb["steps"]:
             auto = bool(step.get("auto")) and PROTECTION_MODE
+            disruptive = step["action"] in {"kill_process", "block_ip", "isolate_host"}
+            # A playbook field is not an authorization grant. Until a tenant-scoped,
+            # authenticated allowlist service exists, disruptive actions stay human-gated.
+            auto_allowed = auto and not disruptive
             target = det.asset_id
             if step["action"] == "kill_process":
                 target = pid or det.asset_id
@@ -85,9 +123,13 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                 ActionRequest(
                     action=ActionType(step["action"]),
                     target=target,
-                    reason=step.get("desc", ""),
-                    auto_approved=auto and step["action"] != "escalate",
-                    parameters={"playbook": pb["id"]},
+                    reason=step.get("desc", "") + (" [human approval required]" if disruptive else ""),
+                    auto_approved=auto_allowed and step["action"] != "escalate",
+                    parameters={
+                        "playbook": pb["id"],
+                        **({"cmdline_hint": cmdline_hint} if step["action"] == "kill_process" and cmdline_hint else {}),
+                        **({"expected_starttime": expected_starttime} if step["action"] == "kill_process" and expected_starttime else {}),
+                    },
                 )
             )
         return actions
@@ -97,8 +139,8 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
             ActionRequest(
                 action=ActionType.ISOLATE_HOST,
                 target=det.asset_id,
-                reason="High/critical severity",
-                auto_approved=PROTECTION_MODE,
+                reason="High/critical severity — human approval required",
+                auto_approved=False,
             )
         )
         if pid:
@@ -106,8 +148,12 @@ def plan_actions(det: Detection) -> List[ActionRequest]:
                 ActionRequest(
                     action=ActionType.KILL_PROCESS,
                     target=pid,
-                    reason="Terminate suspicious process",
-                    auto_approved=PROTECTION_MODE,
+                    reason="Terminate suspicious process — human approval required",
+                    auto_approved=False,
+                    parameters={
+                        **({"cmdline_hint": cmdline_hint} if cmdline_hint else {}),
+                        **({"expected_starttime": expected_starttime} if expected_starttime else {}),
+                    },
                 )
             )
         actions.append(

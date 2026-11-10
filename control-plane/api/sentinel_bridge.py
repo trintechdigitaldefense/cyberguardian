@@ -10,10 +10,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from runtime_paths import DATA_DIR
 from typing import Any, Dict, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
+DATA = DATA_DIR
 CFG = DATA / "sentinel_bridge.json"
 
 

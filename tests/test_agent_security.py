@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+API = ROOT / "control-plane" / "api"
+AGENT = ROOT / "agents" / "linux-ebpf"
+sys.path.insert(0, str(API))
+sys.path.insert(0, str(AGENT))
+
+from command_signing import sign_envelope
+from command_crypto import claim_command, verify_command
+import agent_credentials
+import agent_identity
+
+
+def test_controller_signed_envelope_verifies_and_is_single_use(tmp_path):
+    secret = "controller-agent-command-secret"
+    now = time.time()
+    queued = {
+        "id": "cmd-1",
+        "asset_id": "host-a",
+        "action": "kill_process",
+        "target": "4321",
+        "pending_action_id": "approval-7",
+        "parameters": {"pid": 4321, "_expires_at": now + 600, "_approval_id": "approval-7"},
+    }
+    signed = sign_envelope(queued, tenant_id="tenant-a", secret=secret)
+    ok, reason = verify_command(
+        signed, secret, expected_asset_id="host-a", expected_tenant_id="tenant-a"
+    )
+    assert ok, reason
+    state = tmp_path / "replay.sqlite3"
+    assert claim_command(signed, state)
+    assert not claim_command(signed, state)
+
+
+def test_controller_refuses_unapproved_disruptive_command():
+    queued = {
+        "id": "cmd-2",
+        "asset_id": "host-a",
+        "action": "isolate_host",
+        "target": "host-a",
+        "parameters": {"_expires_at": time.time() + 300},
+    }
+    try:
+        sign_envelope(queued, tenant_id="tenant-a", secret="secret")
+    except ValueError as exc:
+        assert "approval reference" in str(exc)
+    else:
+        raise AssertionError("disruptive command without approval was signed")
+
+
+
+def test_allowlisted_disruptive_command_has_auditable_approval_reference():
+    queued = {
+        "id": "cmd-allowlisted",
+        "asset_id": "host-a",
+        "action": "block_ip",
+        "target": "192.0.2.10",
+        "decision_id": "decision-123",
+        "reason": "approved by scoped [auto allowlist]",
+        "parameters": {"ip": "192.0.2.10", "_expires_at": time.time() + 300},
+    }
+    signed = sign_envelope(queued, tenant_id="tenant-a", secret="secret")
+    assert signed["approval_ref"] == "allowlist:decision-123"
+    ok, reason = verify_command(signed, "secret")
+    assert ok, reason
+
+def test_per_agent_identity_is_bound_to_active_enrollment(tmp_path, monkeypatch):
+    store = tmp_path / "agent_credentials.json"
+    store.write_text(json.dumps({
+        "agents": {
+            "host-a": {
+                "tenant_id": "tenant-a",
+                "api_key": "agent-api-key-" + "a" * 40,
+                "identity_secret": "agent-identity-secret-" + "b" * 40,
+                "command_secret": "agent-command-secret-" + "c" * 40,
+                "status": "active",
+            }
+        }
+    }))
+    monkeypatch.setattr(agent_credentials, "STORE", store)
+    monkeypatch.setenv("CG_PRODUCTION", "1")
+    fingerprint = agent_identity.host_fingerprint("host-a", "linux-test", "machine-1")
+    timestamp = time.time()
+    signature = agent_identity.sign_registration("host-a", fingerprint, timestamp)
+    ok, reason = agent_identity.verify_registration("host-a", fingerprint, timestamp, signature)
+    assert ok, reason
+    assert agent_identity.assert_not_admin_key_on_agent("agent-api-key-" + "a" * 40)[0]
+
+    data = json.loads(store.read_text())
+    data["agents"]["host-a"]["status"] = "revoked"
+    store.write_text(json.dumps(data))
+    ok, reason = agent_identity.verify_registration("host-a", fingerprint, timestamp, signature)
+    assert not ok and reason == "agent_identity_secret_required"
+    assert not agent_identity.assert_not_admin_key_on_agent("agent-api-key-" + "a" * 40)[0]
+
+
+
+def test_registration_rejects_bad_signature_and_stale_timestamp(tmp_path, monkeypatch):
+    store = tmp_path / "agent_credentials.json"
+    store.write_text(json.dumps({
+        "agents": {
+            "host-secure": {
+                "tenant_id": "tenant-secure",
+                "api_key": "agent-key-secure-" + "a" * 40,
+                "identity_secret": "identity-secret-secure-" + "b" * 40,
+                "command_secret": "command-secret-secure-" + "c" * 40,
+                "status": "active",
+            }
+        }
+    }))
+    monkeypatch.setattr(agent_credentials, "STORE", store)
+    monkeypatch.setenv("CG_PRODUCTION", "1")
+    fingerprint = agent_identity.host_fingerprint("host-secure", "linux-test", "machine-secure")
+
+    now = time.time()
+    ok, reason = agent_identity.verify_registration(
+        "host-secure", fingerprint, now, "0" * 64
+    )
+    assert not ok and reason == "bad_identity_signature"
+
+    stale = now - 601
+    stale_signature = agent_identity.sign_registration("host-secure", fingerprint, stale)
+    ok, reason = agent_identity.verify_registration(
+        "host-secure", fingerprint, stale, stale_signature
+    )
+    assert not ok and reason == "identity_signature_expired"
+
+
+def test_agent_fingerprint_change_is_detected(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_identity, "DATA", tmp_path)
+    monkeypatch.setattr(agent_identity, "FINGERPRINTS", tmp_path / "agent_fingerprints.json")
+    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-one", "host")
+    assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-one") is None
+
+    # Compare the new identity against the previous stored value before
+    # accepting and persisting the changed fingerprint.
+    warning = agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two")
+    assert warning and "fingerprint_changed" in warning
+    agent_identity.remember_fingerprint("host-fingerprint", "fingerprint-two", "host")
+    assert agent_identity.check_fingerprint_change("host-fingerprint", "fingerprint-two") is None
+
+
+
+def test_corrupt_fingerprint_store_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_identity, "DATA", tmp_path)
+    fingerprint_store = tmp_path / "agent_fingerprints.json"
+    monkeypatch.setattr(agent_identity, "FINGERPRINTS", fingerprint_store)
+    fingerprint_store.write_text('{"host-a": ', encoding="utf-8")
+
+    try:
+        agent_identity.remember_fingerprint("host-a", "new-fingerprint", "host-a")
+    except RuntimeError as exc:
+        assert "unreadable" in str(exc)
+    else:
+        raise AssertionError("corrupt identity history must not be silently reset")
+    assert fingerprint_store.read_text(encoding="utf-8") == '{"host-a": '
+
+
+
+def test_agent_registry_rejects_weak_and_reused_active_secrets(tmp_path, monkeypatch):
+    store = tmp_path / "agent_credentials.json"
+    monkeypatch.setattr(agent_credentials, "STORE", store)
+    weak = {
+        "agents": {
+            "host-a": {
+                "tenant_id": "tenant-a",
+                "api_key": "short",
+                "identity_secret": "identity-" + "a" * 40,
+                "command_secret": "command-" + "b" * 40,
+                "status": "active",
+            }
+        }
+    }
+    store.write_text(json.dumps(weak), encoding="utf-8")
+    try:
+        agent_credentials.load_agent_credentials()
+    except RuntimeError as exc:
+        assert "weak or missing" in str(exc)
+    else:
+        raise AssertionError("weak active enrollment credentials must be rejected")
+
+    duplicate = {
+        "agents": {
+            "host-a": {
+                "tenant_id": "tenant-a",
+                "api_key": "shared-secret-" + "a" * 40,
+                "identity_secret": "identity-secret-" + "b" * 40,
+                "command_secret": "command-secret-" + "c" * 40,
+                "status": "active",
+            },
+            "host-b": {
+                "tenant_id": "tenant-b",
+                "api_key": "shared-secret-" + "a" * 40,
+                "identity_secret": "identity-secret-" + "d" * 40,
+                "command_secret": "command-secret-" + "e" * 40,
+                "status": "active",
+            },
+        }
+    }
+    store.write_text(json.dumps(duplicate), encoding="utf-8")
+    try:
+        agent_credentials.load_agent_credentials()
+    except RuntimeError as exc:
+        assert "must not share credentials" in str(exc)
+    else:
+        raise AssertionError("shared active credentials must be rejected")
