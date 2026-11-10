@@ -39,6 +39,33 @@ read_credential() {
 
 if [ ! -f "$ROOT/data/credentials.json" ]; then
   echo "WARNING: No data/credentials.json — run ./scripts/setup_credentials.sh"
+else
+  if ! python3 - "$ROOT/data" <<'PY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+data_dir = Path(sys.argv[1])
+credentials = data_dir / "credentials.json"
+try:
+    if data_dir.is_symlink() or (stat.S_IMODE(data_dir.stat().st_mode) & 0o077):
+        raise ValueError("data directory must be private (0700)")
+    if credentials.is_symlink() or not stat.S_ISREG(credentials.lstat().st_mode):
+        raise ValueError("credentials path must be a regular non-symlink file")
+    if stat.S_IMODE(credentials.stat().st_mode) & 0o077:
+        raise ValueError("credentials file must be private (0600)")
+    payload = json.loads(credentials.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("api_key"), str) or not payload["api_key"]:
+        raise ValueError("credentials file has an invalid schema or missing administrator key")
+except (OSError, UnicodeError, ValueError) as exc:
+    raise SystemExit(f"invalid local credentials: {exc}")
+PY
+  then
+    echo "ERROR: refusing to start with invalid or insecure data/credentials.json."
+    exit 1
+  fi
 fi
 CYBERGUARDIAN_API_KEY="${CYBERGUARDIAN_API_KEY:-}"
 CG_AGENT_KEY="${CG_AGENT_KEY:-}"
