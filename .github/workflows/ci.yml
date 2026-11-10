@@ -160,6 +160,36 @@ jobs:
               assert client.post("/logout", headers={"X-CSRF-Token": csrf}).status_code == 303
               assert client.get("/ops/fleet").status_code == 401
           PY
+          docker compose -p "$PROJECT" exec -T api python - <<'PY'
+          import os
+          import httpx
+          base = "http://127.0.0.1:8080"
+          with httpx.Client(timeout=5.0) as client:
+              nad_read = client.get(base + "/v1/fleet", headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]})
+              assert nad_read.status_code == 403, nad_read.text
+              dashboard_agent = client.get(
+                  base + "/v1/agent/commands?asset_id=compose-host",
+                  headers={"X-API-Key": os.environ["CG_DASHBOARD_API_KEY"], "X-Tenant-ID": "default"},
+              )
+              assert dashboard_agent.status_code == 403, dashboard_agent.text
+              detection = client.post(
+                  base + "/v1/detections",
+                  headers={"X-API-Key": os.environ["CG_NAD_API_KEY"]},
+                  json={"asset_id": "compose-host", "source": "nad-processor",
+                        "severity": "medium", "confidence": 0.5, "title": "CI detection",
+                        "description": "Non-destructive service-scope acceptance", "indicators": {}, "tags": []},
+              )
+              assert detection.status_code not in {401, 403}, detection.text
+              no_decision_key = client.get("http://decision-service:8001/v1/protection")
+              assert no_decision_key.status_code == 401, no_decision_key.text
+              decision_ok = client.get(
+                  "http://decision-service:8001/v1/protection",
+                  headers={"X-Decision-Service-Key": os.environ["DECISION_SERVICE_API_KEY"]},
+              )
+              assert decision_ok.status_code == 200, decision_ok.text
+          PY
+          docker compose -p "$PROJECT" exec -T dashboard python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_NAD_API_KEY' not in os.environ"
+          docker compose -p "$PROJECT" exec -T nad-processor python -c "import os; assert 'CYBERGUARDIAN_API_KEY' not in os.environ and 'CG_DASHBOARD_API_KEY' not in os.environ"
           docker compose -p "$PROJECT" ps
   containment-integration:
     runs-on: ubuntu-latest
