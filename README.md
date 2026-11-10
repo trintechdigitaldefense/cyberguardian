@@ -96,7 +96,14 @@ See [docs/HARDENING.md](docs/HARDENING.md) for the full production configuration
 
 ## Agent
 
-The shared bootstrap agent key is for a non-production lab only. For production, provision a separate API key, identity secret and command-signing secret for every asset using [docs/AGENT_ENROLLMENT.md](docs/AGENT_ENROLLMENT.md). Never reuse one device's credentials on another device.
+The shared bootstrap agent key is for a non-production lab only. For production, provision a separate API key, identity secret and command-signing secret for every asset using [docs/AGENT_ENROLLMENT.md](docs/AGENT_ENROLLMENT.md). Never reuse one device's credentials on another device. Enrollment stores secrets in the protected controller registry without printing them. For a local Termux/Linux controller agent, enroll and launch by asset ID:
+
+```bash
+python3 scripts/enroll_agent.py --asset-id android-termux-controller --tenant-id customer-a
+CG_AGENT_ASSET_ID=android-termux-controller CG_PRODUCTION=1 CG_REQUIRE_AGENT_IDENTITY=1 ./start.sh
+```
+
+The launcher loads only that active asset's credentials and refuses revoked or incomplete records. Remote agents should use a protected environment file created with `--env-file` and delivered securely.
 
 Lab-only manual startup:
 
