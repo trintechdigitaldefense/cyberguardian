@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 from runtime_paths import DATA_DIR
 
 STORE = DATA_DIR / "issue_memory.jsonl"
+_DEFAULT_ARCHIVE = DATA_DIR / "issue_memory_archive.jsonl"
+ARCHIVE = _DEFAULT_ARCHIVE
 MAX_ISSUES = 2000
 MAX_ARCHIVED_ISSUES = 10000
 _CURRENT_TENANT = ContextVar("cg_issue_memory_tenant", default=None)
@@ -93,6 +95,10 @@ def _read_all() -> List[Dict[str, Any]]:
 
 
 def _archive_path() -> Path:
+    # Preserve the configurable archive path used by migration and operations;
+    # derive a sibling path for isolated/custom stores unless explicitly overridden.
+    if ARCHIVE != _DEFAULT_ARCHIVE:
+        return Path(ARCHIVE)
     return STORE.with_name(STORE.stem + "_archive" + STORE.suffix)
 
 
