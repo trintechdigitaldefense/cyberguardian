@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
@@ -18,6 +19,7 @@ from starlette.responses import JSONResponse
 from agent_credentials import active_agent_api_keys, find_agent_by_api_key, get_agent_credential
 from command_signing import sign_envelope
 from audit_ledger import append_event as _append_audit_ledger_event
+from fleet_lifecycle import project_fleet_lifecycle
 
 _ROOT = Path(__file__).resolve().parent
 _FULL = _ROOT / "main_full.py"
@@ -232,6 +234,16 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
     if not isinstance(payload, dict) or not isinstance(payload.get(list_key), list):
         return JSONResponse({"detail": "tenant response shape could not be validated"}, status_code=502)
     filtered = [item for item in payload[list_key] if isinstance(item, dict) and _item_matches_tenant(item, tenant_id)]
+    if path == "/v1/fleet":
+        try:
+            stale_after = int(os.environ.get("CG_AGENT_STALE_AFTER_SECONDS", "180"))
+        except ValueError:
+            stale_after = 180
+        filtered = project_fleet_lifecycle(
+            filtered,
+            now=time.time(),
+            stale_after_seconds=stale_after,
+        )
     payload[list_key] = filtered
     if path == "/v1/gate":
         payload["pending_count"] = len(filtered)
