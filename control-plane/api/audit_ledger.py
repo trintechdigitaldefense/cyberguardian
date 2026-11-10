@@ -1,0 +1,101 @@
+"""Append-only, hash-chained audit ledger for gateway audit events.
+
+This is tamper-evident local evidence, not protection against an attacker who
+can rewrite both the ledger and application binaries. Export checkpoints to an
+independent protected system for stronger assurance.
+"""
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import tempfile
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+GENESIS = "0" * 64
+
+
+class LedgerIntegrityError(RuntimeError):
+    pass
+
+
+def _canonical(value: dict[str, Any]) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      default=str).encode("utf-8")
+
+
+def _hash_record(record: dict[str, Any]) -> str:
+    payload = {key: value for key, value in record.items() if key != "hash"}
+    return hashlib.sha256(_canonical(payload)).hexdigest()
+
+
+def verify_ledger(path: Path) -> dict[str, Any]:
+    path = Path(path)
+    if not path.exists():
+        return {"valid": True, "records": 0, "head": GENESIS}
+    previous = GENESIS
+    count = 0
+    with open(path, "r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.endswith("\n"):
+                return {"valid": False, "records": count, "head": previous,
+                        "error": f"truncated record at line {line_number}"}
+            try:
+                record = json.loads(line)
+            except ValueError:
+                return {"valid": False, "records": count, "head": previous,
+                        "error": f"invalid JSON at line {line_number}"}
+            if not isinstance(record, dict) or record.get("prev_hash") != previous:
+                return {"valid": False, "records": count, "head": previous,
+                        "error": f"chain link mismatch at line {line_number}"}
+            actual = _hash_record(record)
+            if not isinstance(record.get("hash"), str) or not __import__("hmac").compare_digest(actual, record["hash"]):
+                return {"valid": False, "records": count, "head": previous,
+                        "error": f"record hash mismatch at line {line_number}"}
+            previous = actual
+            count += 1
+    return {"valid": True, "records": count, "head": previous}
+
+
+def append_event(path: Path, event: dict[str, Any]) -> dict[str, Any]:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        status = verify_ledger(path)
+        if not status["valid"]:
+            raise LedgerIntegrityError(status["error"])
+        record = {
+            "sequence": status["records"] + 1,
+            "event_id": str(uuid.uuid4()),
+            "recorded_at": time.time(),
+            "prev_hash": status["head"],
+            "event": event,
+        }
+        record["hash"] = _hash_record(record)
+        encoded = _canonical(record) + b"\n"
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            written = os.write(fd, encoded)
+            if written != len(encoded):
+                raise OSError("short append to audit ledger")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+        return record
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
