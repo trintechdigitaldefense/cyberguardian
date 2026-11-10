@@ -21,6 +21,7 @@ services:
       CG_DATA_DIR: /app/data
       CG_PRODUCTION: ${CG_PRODUCTION:-1}
       CG_REQUIRE_AGENT_IDENTITY: ${CG_REQUIRE_AGENT_IDENTITY:-1}
+      CG_AGENT_STALE_AFTER_SECONDS: ${CG_AGENT_STALE_AFTER_SECONDS:-180}
     volumes:
       - ${CG_DATA_HOST_DIR:-../../data}:/app/data
     depends_on: [decision-service]
