@@ -7,6 +7,7 @@ provisioning into that agent's local environment file. Never commit data/.
 from __future__ import annotations
 
 import argparse
+import re
 import secrets
 import sys
 import time
@@ -16,19 +17,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "control-plane" / "
 from agent_credentials import load_agent_credentials, write_agent_credentials
 
 
+_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
+
+
+def _valid_identifier(value: str) -> bool:
+    return bool(_IDENTIFIER.fullmatch(value))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset-id", required=True)
-    parser.add_argument("--tenant-id", default="default")
+    parser.add_argument(
+        "--tenant-id",
+        default=None,
+        help="tenant to bind; omitted rotations/re-enrollments preserve the existing tenant",
+    )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--rotate", action="store_true", help="replace existing active credentials")
     action.add_argument("--revoke", action="store_true", help="revoke existing credentials")
     args = parser.parse_args()
 
     asset_id = args.asset_id.strip()
-    tenant_id = args.tenant_id.strip()
-    if not asset_id or not tenant_id:
-        parser.error("asset-id and tenant-id must be non-empty")
+    if not _valid_identifier(asset_id):
+        parser.error("asset-id must be 1-128 characters: letters, digits, dot, underscore, colon or hyphen")
 
     agents = load_agent_credentials()
     current = agents.get(asset_id)
@@ -46,6 +57,14 @@ def main() -> int:
     if current and current.get("status", "active") == "active" and not args.rotate:
         print("Active credentials already exist. Use --rotate to replace them.", file=sys.stderr)
         return 2
+
+    tenant_id = (
+        args.tenant_id.strip()
+        if args.tenant_id is not None
+        else str((current or {}).get("tenant_id") or "default").strip()
+    )
+    if not _valid_identifier(tenant_id):
+        parser.error("tenant-id must be 1-128 characters: letters, digits, dot, underscore, colon or hyphen")
 
     record = {
         "tenant_id": tenant_id,
