@@ -214,3 +214,32 @@ def test_legacy_issue_tenant_migration_updates_active_and_archive_atomically(tmp
     # second tenant-a issue remains active after the bounded-store rotation.
     assert issue_memory.list_issues(tenant_id="tenant-a")[0]["id"] == archived["id"]
     assert issue_memory.list_archived_issues(tenant_id="tenant-b")[0]["id"] == active["id"]
+
+
+
+def test_issue_memory_rejects_symlinked_store_and_lock_paths(tmp_path, monkeypatch):
+    target = tmp_path / "target.jsonl"
+    target.write_text("", encoding="utf-8")
+    linked_store = tmp_path / "issues.jsonl"
+    linked_store.symlink_to(target)
+    monkeypatch.setattr(issue_memory, "STORE", linked_store)
+    try:
+        issue_memory.remember_issue("must-not-write", "asset-a")
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked issue-memory store must be rejected")
+    assert target.read_text(encoding="utf-8") == ""
+
+    store = tmp_path / "safe-issues.jsonl"
+    lock_target = tmp_path / "lock-target"
+    lock_target.write_text("untouched", encoding="utf-8")
+    (tmp_path / "safe-issues.jsonl.lock").symlink_to(lock_target)
+    monkeypatch.setattr(issue_memory, "STORE", store)
+    try:
+        issue_memory.remember_issue("must-not-lock", "asset-a")
+    except PermissionError as exc:
+        assert "symlink" in str(exc)
+    else:
+        raise AssertionError("symlinked issue-memory lock must be rejected")
+    assert lock_target.read_text(encoding="utf-8") == "untouched"
