@@ -154,7 +154,23 @@ The export prints a manifest containing the record count, chain head, byte count
 
 **Integrity limitation:** a local hash chain detects accidental corruption and unauthorized edits that do not also rewrite the chain. It is not a defense against a privileged attacker who can replace the ledger and application code. For stronger assurance, periodically export signed checkpoints or the ledger itself to an independently administered, append-only remote log/SIEM. Retention, remote export and external checkpoint signing remain R4 work.
 
-## 8. Operational security checks
+## 8. Tenant-scoped weekly client report export
+
+Set the API key and tenant explicitly. The script refuses to generate a report without a tenant or when either the weekly report or scorecard source is unavailable.
+
+```bash
+CYBERGUARDIAN_API=http://127.0.0.1:8080 \\
+CYBERGUARDIAN_API_KEY="$CYBERGUARDIAN_API_KEY" \\
+CYBERGUARDIAN_TENANT="client-a" \\
+python3 scripts/weekly_client_pdf.py \\
+  --client "Client A" \\
+  --out ./reports/client-a-weekly.pdf \\
+  --csv-out ./reports/client-a-scorecard.csv
+```
+
+The PDF includes the tenant and generation timestamp. CSV export contains scorecard checks, is written atomically with owner-only permissions, and prefixes spreadsheet-formula-like values to reduce CSV injection risk. Store exports only in the tenant's approved document location and apply the client's retention/access policy.
+
+## 9. Operational security checks
 
 Before enabling a client tenant:
 
