@@ -78,3 +78,44 @@ def test_corrupt_issue_memory_fails_closed_without_rewriting(tmp_path, monkeypat
     else:
         raise AssertionError("corrupt issue memory must block read-modify-write")
     assert path.read_text() == "{broken-json}\n"
+
+
+
+def test_issue_capacity_archives_evicted_records_without_data_loss(tmp_path, monkeypatch):
+    path = tmp_path / "issues.jsonl"
+    monkeypatch.setattr(issue_memory, "STORE", path)
+    monkeypatch.setattr(issue_memory, "MAX_ISSUES", 3)
+    monkeypatch.setattr(issue_memory, "MAX_ARCHIVED_ISSUES", 10)
+    created = []
+    for value in range(5):
+        created.append(
+            issue_memory.remember_issue(
+                title=f"archive issue {value}",
+                asset_id=f"asset-{value}",
+                tags=["archive-test"],
+            )
+        )
+    active = issue_memory.list_issues(limit=10)
+    archived = issue_memory.list_archived_issues(limit=10)
+    assert len(active) == 3
+    assert len(archived) == 2
+    assert {item["id"] for item in active + archived} == {item["id"] for item in created}
+    archive_path = path.with_name("issues_archive.jsonl")
+    assert archive_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_issue_archive_capacity_fails_closed_without_dropping_active_records(tmp_path, monkeypatch):
+    path = tmp_path / "issues.jsonl"
+    monkeypatch.setattr(issue_memory, "STORE", path)
+    monkeypatch.setattr(issue_memory, "MAX_ISSUES", 1)
+    monkeypatch.setattr(issue_memory, "MAX_ARCHIVED_ISSUES", 1)
+    issue_memory.remember_issue("first", "asset-1")
+    issue_memory.remember_issue("second", "asset-2")
+    try:
+        issue_memory.remember_issue("third", "asset-3")
+    except issue_memory.IssueMemoryCapacityError:
+        pass
+    else:
+        raise AssertionError("full issue archive must reject new records")
+    assert [item["title"] for item in issue_memory.list_issues()] == ["second"]
+    assert [item["title"] for item in issue_memory.list_archived_issues()] == ["first"]
