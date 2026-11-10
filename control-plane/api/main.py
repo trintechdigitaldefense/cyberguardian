@@ -271,6 +271,181 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
     )
 
 
+# Request-scoped database transaction used by agent event idempotency.
+# The route handlers continue to call _mod.db(); during an idempotent delivery
+# they reuse this connection so the business write and replay record commit
+# atomically in the same SQLite transaction.
+_IDEMPOTENCY_DB = ContextVar("cg_idempotency_db", default=None)
+_ORIGINAL_DB = _mod.db
+
+
+@contextmanager
+def _request_scoped_db():
+    connection = _IDEMPOTENCY_DB.get()
+    if connection is not None:
+        yield connection
+        return
+    with _ORIGINAL_DB() as connection:
+        yield connection
+
+
+_mod.db = _request_scoped_db
+_AGENT_IDEMPOTENCY_PATHS = {"/v1/detections", "/v1/agent/command-result"}
+_AGENT_EVENT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_AGENT_IDEMPOTENCY_RETENTION_SECONDS = 30 * 24 * 60 * 60
+_AGENT_IDEMPOTENCY_MAX_RECORDS = 200000
+
+
+@app.middleware("http")
+async def _agent_event_idempotency(request: Request, call_next):
+    if request.method.upper() != "POST" or request.url.path not in _AGENT_IDEMPOTENCY_PATHS:
+        return await call_next(request)
+
+    event_id = (request.headers.get("X-CG-Event-ID") or "").strip().lower()
+    if not event_id:
+        return await call_next(request)
+    if not _AGENT_EVENT_ID_RE.fullmatch(event_id):
+        return JSONResponse({"detail": "invalid agent event id"}, status_code=400)
+
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return JSONResponse({"detail": "invalid idempotent event body"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"detail": "idempotent event body must be an object"}, status_code=400)
+
+    asset_id = str(payload.get("asset_id") or "").strip()
+    tenant_id = str(request.headers.get("X-Tenant-ID") or payload.get("tenant_id") or "").strip()
+    if not asset_id or not tenant_id:
+        return JSONResponse({"detail": "asset and tenant are required for idempotent delivery"}, status_code=400)
+
+    canonical = json.dumps(
+        {"kind": request.method.upper(), "path": request.url.path, "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    expected_event_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(event_id, expected_event_id):
+        return JSONResponse({"detail": "agent event id does not match request payload"}, status_code=400)
+
+    db_path = Path(_mod.DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(db_path), timeout=30)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cg_agent_idempotency (
+                tenant_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                response_body BLOB NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (tenant_id, asset_id, event_id, method, path)
+            )
+            """
+        )
+        existing = connection.execute(
+            """
+            SELECT status_code, content_type, response_body
+            FROM cg_agent_idempotency
+            WHERE tenant_id=? AND asset_id=? AND event_id=? AND method=? AND path=?
+            """,
+            (tenant_id, asset_id, event_id, request.method.upper(), request.url.path),
+        ).fetchone()
+        if existing:
+            connection.commit()
+            return Response(
+                content=bytes(existing["response_body"]),
+                status_code=int(existing["status_code"]),
+                media_type=str(existing["content_type"] or "application/json"),
+                headers={"X-CG-Idempotent-Replay": "true"},
+            )
+
+        now = time.time()
+        connection.execute(
+            "DELETE FROM cg_agent_idempotency WHERE created_at < ?",
+            (now - _AGENT_IDEMPOTENCY_RETENTION_SECONDS,),
+        )
+        count = connection.execute("SELECT COUNT(*) FROM cg_agent_idempotency").fetchone()[0]
+        if int(count) >= _AGENT_IDEMPOTENCY_MAX_RECORDS:
+            connection.rollback()
+            return JSONResponse({"detail": "agent idempotency capacity reached"}, status_code=503)
+
+        token = _IDEMPOTENCY_DB.set(connection)
+        try:
+            sent = False
+
+            async def replay_body():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": raw_body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            replay_request = Request(request.scope, replay_body)
+            response = await call_next(replay_request)
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+            response_body = b"".join(chunks)
+            status_code = int(response.status_code)
+            retryable_status = status_code in {408, 425, 429} or status_code >= 500
+            if (200 <= status_code < 300) or (400 <= status_code < 500 and not retryable_status):
+                connection.execute(
+                    """
+                    INSERT INTO cg_agent_idempotency
+                    (tenant_id, asset_id, event_id, method, path, status_code, content_type, response_body, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        asset_id,
+                        event_id,
+                        request.method.upper(),
+                        request.url.path,
+                        status_code,
+                        response.headers.get("content-type", "application/json"),
+                        response_body,
+                        now,
+                    ),
+                )
+                connection.commit()
+            else:
+                connection.rollback()
+
+            headers = {
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() not in {"content-length", "transfer-encoding"}
+            }
+            return Response(
+                content=response_body,
+                status_code=status_code,
+                headers=headers,
+                background=response.background,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            _IDEMPOTENCY_DB.reset(token)
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 @app.middleware("http")
 async def _verify_dashboard_operator(request: Request, call_next):
     api_key = str(request.headers.get("X-API-Key") or "")
