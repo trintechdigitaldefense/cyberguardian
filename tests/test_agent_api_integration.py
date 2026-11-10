@@ -502,3 +502,89 @@ def test_detection_idempotency_replays_stored_response_without_rehandling(tmp_pa
             ("tenant-a", "asset-a", event_id),
         ).fetchone()[0]
     assert count == 1
+
+
+
+def test_offline_queue_lost_ack_retry_is_deduplicated_by_gateway(tmp_path):
+    import main
+    import offline_queue
+    from starlette.responses import StreamingResponse
+
+    main = importlib.reload(main)
+    main._mod.DB_PATH = tmp_path / "gateway.sqlite3"
+    queue = offline_queue.OfflineQueue(
+        tmp_path / "agent" / "offline_queue.jsonl",
+        status_path=tmp_path / "agent" / "connectivity.json",
+    )
+    payload = {
+        "asset_id": "asset-a",
+        "tenant_id": "tenant-a",
+        "title": "lost acknowledgement replay",
+    }
+    queue.enqueue("POST", "/v1/detections", payload)
+    queued = json.loads(queue.path.read_text(encoding="utf-8").splitlines()[0])
+    event_id = queued["id"]
+    handled = []
+    responses = []
+
+    def make_request(record_id):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/detections",
+            "raw_path": b"/v1/detections",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"x-tenant-id", b"tenant-a"),
+                (b"x-cg-event-id", str(record_id).encode("ascii")),
+            ],
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+        }
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        return Request(scope, receive)
+
+    async def handle(_request):
+        handled.append("business transaction")
+        return StreamingResponse(iter([b'{"accepted":true}']), media_type="application/json")
+
+    def deliver(path, body, record_id=None):
+        assert path == "/v1/detections"
+        assert body == payload
+        response = asyncio.run(
+            main._agent_event_idempotency(make_request(record_id), handle)
+        )
+        responses.append(response)
+        # Simulate the server committing the event while the HTTP acknowledgement
+        # is lost. The queue must retain it and retry with the same stable ID.
+        if len(responses) == 1:
+            return False, {"simulated_lost_acknowledgement": True}
+        return 200 <= response.status_code < 300, {}
+
+    first = queue.flush(deliver, now=100)
+    assert first == {"flushed": 0, "failed": 1, "remaining": 1, "deferred": 0}
+    assert queue.size() == 1
+    second = queue.flush(deliver, now=105)
+    assert second == {"flushed": 1, "failed": 0, "remaining": 0, "deferred": 0}
+    assert queue.size() == 0
+    assert len(handled) == 1
+    assert responses[1].headers.get("x-cg-idempotent-replay") == "true"
+    with main._mod.db() as conn:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM cg_agent_idempotency WHERE tenant_id=? AND asset_id=? AND event_id=?",
+            ("tenant-a", "asset-a", event_id),
+        ).fetchone()[0]
+    assert rows == 1
