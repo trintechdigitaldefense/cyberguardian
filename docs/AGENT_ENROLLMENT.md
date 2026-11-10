@@ -54,26 +54,23 @@ $CG_DATA_DIR/agent_credentials.json
 
 The file is written atomically with mode 0600. The enrollment script does not print any secret values. The controller-side launcher can read the registry directly; remote agents must receive the protected environment file through your approved secret-delivery process.
 
-## 3. Configure the agent
+## 3. Configure and start the remote agent
 
-Create a protected environment file on the enrolled Linux device, for example:
+Install or clone the CyberGuardian agent code on the remote Linux device, then transfer the protected environment file to it through your approved secret-delivery process. Keep the file and parent directory private (0600 and 0700):
 
 ```sh
 sudo install -d -m 0700 /etc/cyberguardian
-sudo install -m 0600 /dev/null /etc/cyberguardian/agent.env
-sudoedit /etc/cyberguardian/agent.env
+sudo install -m 0600 /secure-transfer/linux-server-01.env /etc/cyberguardian/agent.env
+python3 scripts/run_enrolled_agent.py --env-file /etc/cyberguardian/agent.env --interval 60
 ```
 
-The protected environment file created with `--env-file` already contains the required values. If you provision the file manually, set:
+The launcher reads the asset, tenant and per-device credentials from that protected file, validates the required identity and command-signature settings, filters inherited server credentials from the child process environment, and refuses weak credentials or insecure file permissions. It does not require the controller's local enrollment registry to exist on the remote host.
 
-- `CYBERGUARDIAN_API` (or `CG_CONTROLLER_URL`)
-- `CYBERGUARDIAN_API_KEY`
-- `CYBERGUARDIAN_ASSET_ID`
-- `CYBERGUARDIAN_TENANT`
-- `CG_AGENT_IDENTITY_SECRET`
-- `CG_COMMAND_SIGNING_SECRET`
-- `CG_REQUIRE_AGENT_IDENTITY=1`
-- `CG_REQUIRE_COMMAND_SIG=1`
+For a local agent running on the controller device, use the registry-backed form instead:
+
+```sh
+CG_AGENT_ASSET_ID=android-termux-controller CG_PRODUCTION=1 CG_REQUIRE_AGENT_IDENTITY=1 ./start.sh
+```
 
 Do not reuse an agent's secrets on another asset. Keep the environment file readable only by the agent service account.
 
