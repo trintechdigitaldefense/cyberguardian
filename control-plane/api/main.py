@@ -156,6 +156,24 @@ def _pending_action_matches_tenant(action_id: str, tenant_id: str) -> bool:
     return False
 
 
+def _deny_verified_operator(request: Request, claims: dict, reason: str, status_code: int = 403):
+    context_token = _operator_context.CURRENT_OPERATOR.set(claims)
+    try:
+        _mod.write_audit(
+            event="operator_request_denied",
+            action=request.method,
+            target=request.url.path,
+            actor=claims["sub"],
+            detail=reason,
+            result_ok=0,
+        )
+    except Exception:
+        _logger.exception("operator denial audit write failed")
+    finally:
+        _operator_context.CURRENT_OPERATOR.reset(context_token)
+    return JSONResponse({"detail": reason}, status_code=status_code)
+
+
 @app.middleware("http")
 async def _verify_dashboard_operator(request: Request, call_next):
     api_key = str(request.headers.get("X-API-Key") or "")
@@ -191,34 +209,34 @@ async def _verify_dashboard_operator(request: Request, call_next):
             return JSONResponse({"detail": str(exc)}, status_code=403)
         requested_tenants = request.query_params.getlist("tenant_id")
         if any(value != claims["tenant_id"] for value in requested_tenants):
-            return JSONResponse({"detail": "operator tenant does not match requested tenant"}, status_code=403)
+            return _deny_verified_operator(request, claims, "operator tenant does not match requested tenant")
         raw_body = await request.body()
         if raw_body:
             try:
                 body_claims = json.loads(raw_body.decode("utf-8"))
             except (UnicodeError, ValueError):
-                return JSONResponse({"detail": "invalid JSON request body"}, status_code=400)
+                return _deny_verified_operator(request, claims, "invalid JSON request body", 400)
             if isinstance(body_claims, dict):
                 body_tenant = body_claims.get("tenant_id")
                 if body_tenant and str(body_tenant) != claims["tenant_id"]:
-                    return JSONResponse({"detail": "operator tenant does not match request body tenant"}, status_code=403)
+                    return _deny_verified_operator(request, claims, "operator tenant does not match request body tenant")
                 if request.url.path == "/v1/feedback/benign":
                     asset_id = str(body_claims.get("asset_id") or "")
                     pending_id = str(body_claims.get("pending_action_id") or "")
                     if asset_id and not _asset_matches_tenant(asset_id, claims["tenant_id"]):
-                        return JSONResponse({"detail": "asset is outside the operator tenant"}, status_code=403)
+                        return _deny_verified_operator(request, claims, "asset is outside the operator tenant")
                     if pending_id and not _pending_action_matches_tenant(pending_id, claims["tenant_id"]):
-                        return JSONResponse({"detail": "pending action is outside the operator tenant"}, status_code=403)
+                        return _deny_verified_operator(request, claims, "pending action is outside the operator tenant")
 
         rollback_match = re.fullmatch(r"/v1/rollback/([A-Za-z0-9_.:-]{1,128})", request.url.path)
         if rollback_match and not _asset_matches_tenant(rollback_match.group(1), claims["tenant_id"]):
-            return JSONResponse({"detail": "asset is outside the operator tenant"}, status_code=403)
+            return _deny_verified_operator(request, claims, "asset is outside the operator tenant")
         pending_match = re.fullmatch(
             r"/v1/gate/(?:approve|reject)/([A-Za-z0-9_.:-]{1,128})",
             request.url.path,
         )
         if pending_match and not _pending_action_matches_tenant(pending_match.group(1), claims["tenant_id"]):
-            return JSONResponse({"detail": "pending action is outside the operator tenant"}, status_code=403)
+            return _deny_verified_operator(request, claims, "pending action is outside the operator tenant")
 
         async def replay_operator_body():
             return {"type": "http.request", "body": raw_body, "more_body": False}
