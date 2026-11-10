@@ -253,3 +253,17 @@ def test_queue_directories_and_lock_files_are_private(tmp_path):
     assert queue.flush_lock_path.stat().st_mode & 0o777 == 0o600
     queue.set_status("online", 0)
     assert queue.status_path.stat().st_mode & 0o777 == 0o600
+
+
+
+def test_queue_refuses_shared_directory_without_chmodding_it(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
+    try:
+        offline.OfflineQueue(shared / "queue.jsonl")
+    except PermissionError as exc:
+        assert "must be private" in str(exc)
+    else:
+        raise AssertionError("shared queue directory must be rejected")
+    assert shared.stat().st_mode & 0o777 == 0o755
