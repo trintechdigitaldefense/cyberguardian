@@ -35,6 +35,7 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
     from operator_context import mint_assertion
 
     data_dir = tmp_path / "controller-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("CG_DATA_DIR", str(data_dir))
     monkeypatch.setenv("CG_PRODUCTION", "1")
     monkeypatch.setenv("CG_REQUIRE_AGENT_IDENTITY", "1")
