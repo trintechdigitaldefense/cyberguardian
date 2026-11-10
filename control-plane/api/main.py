@@ -209,6 +209,40 @@ def _pending_action_matches_tenant(action_id: str, tenant_id: str) -> bool:
                     "SELECT tenant_id FROM pending_actions WHERE id = ?", (action_id,)
                 ).fetchone()
                 return bool(row) and str(row["tenant_id"] or "default") == tenant_id
+            # Older pending_actions schemas do not carry asset_id or
+            # tenant_id. For those rows, resolve the owning tenant from the
+            # action target or an explicit asset_id embedded in parameters.
+            fallback_columns = [
+                name for name in ("target", "parameters") if name in columns
+            ]
+            if not fallback_columns:
+                return False
+            row = conn.execute(
+                "SELECT " + ", ".join(fallback_columns)
+                + " FROM pending_actions WHERE id = ?",
+                (action_id,),
+            ).fetchone()
+            if not row:
+                return False
+            asset_candidates = []
+            if "target" in fallback_columns:
+                target = str(row["target"] or "").strip()
+                if target:
+                    asset_candidates.append(target)
+            if "parameters" in fallback_columns:
+                try:
+                    parameters = json.loads(row["parameters"] or "{}")
+                except (ValueError, TypeError):
+                    parameters = {}
+                if isinstance(parameters, dict):
+                    for key in ("asset_id", "asset", "host_id"):
+                        value = str(parameters.get(key) or "").strip()
+                        if value:
+                            asset_candidates.append(value)
+            return any(
+                _asset_matches_tenant(asset_id, tenant_id)
+                for asset_id in dict.fromkeys(asset_candidates)
+            )
     except Exception:
         _logger.exception("pending action tenant lookup failed")
     return False

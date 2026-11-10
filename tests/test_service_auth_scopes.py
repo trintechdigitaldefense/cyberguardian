@@ -293,6 +293,115 @@ def test_gateway_enforces_dashboard_and_nad_service_boundaries(tmp_path, monkeyp
         )
         assert denied_gate_override.status_code == 403
 
+        # Positive approval/rejection paths require a real tenant-bound
+        # pending_actions row; a queued agent command alone is not an approval.
+        def seed_pending_action(action_id):
+            with main._mod.db() as conn:
+                schema = conn.execute("PRAGMA table_info(pending_actions)").fetchall()
+                columns = {str(row["name"]): row for row in schema}
+                assert "id" in columns
+                values = {
+                    "id": action_id,
+                    "tenant_id": "tenant-a",
+                    "status": "pending",
+                    "action": "isolate_host",
+                    "action_type": "isolate_host",
+                    "target": "asset-tenant-a",
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "reason": "R4 supervised gate acceptance",
+                    "parameters": "{}",
+                    "metadata": "{}",
+                }
+                for name, column in columns.items():
+                    if name in values or not column["notnull"] or column["dflt_value"] is not None or column["pk"]:
+                        continue
+                    if "time" in name:
+                        values[name] = time.time()
+                    elif "status" in name or "state" in name:
+                        values[name] = "pending"
+                    elif "action" in name:
+                        values[name] = "isolate_host"
+                    elif "target" in name or "asset" in name:
+                        values[name] = "asset-tenant-a"
+                    elif "parameter" in name or "metadata" in name or "result" in name:
+                        values[name] = "{}"
+                    elif "reason" in name or "detail" in name:
+                        values[name] = "R4 supervised gate acceptance"
+                    elif "tenant" in name:
+                        values[name] = "tenant-a"
+                    elif "id" in name:
+                        values[name] = action_id
+                    elif "INT" in str(column["type"]).upper():
+                        values[name] = 0
+                    else:
+                        values[name] = ""
+                values = {name: value for name, value in values.items() if name in columns}
+                names = list(values)
+                placeholders = ", ".join("?" for _ in names)
+                conn.execute(
+                    f"INSERT INTO pending_actions ({', '.join(names)}) VALUES ({placeholders})",
+                    [values[name] for name in names],
+                )
+
+        approve_id = "pending-tenant-a-approve"
+        seed_pending_action(approve_id)
+        main._mod.queue_agent_command(
+            asset_id="asset-tenant-a",
+            action="isolate_host",
+            target="asset-tenant-a",
+            parameters={"reason": "R4 supervised approval test"},
+            pending_action_id=approve_id,
+            ttl_seconds=300,
+        )
+        approve_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST",
+            path=f"/v1/gate/approve/{approve_id}",
+            request_id="integration-gate-approve",
+        )
+        approved = client.post(
+            f"/v1/gate/approve/{approve_id}",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": approve_assertion},
+        )
+        assert approved.status_code == 200, approved.text
+        with main._mod.db() as conn:
+            approved_row = conn.execute(
+                "SELECT * FROM pending_actions WHERE id=?", (approve_id,)
+            ).fetchone()
+        assert approved_row is not None
+        if "status" in approved_row.keys():
+            assert str(approved_row["status"]).lower() in {"approved", "queued", "staged"}
+
+        reject_id = "pending-tenant-a-reject"
+        seed_pending_action(reject_id)
+        main._mod.queue_agent_command(
+            asset_id="asset-tenant-a",
+            action="isolate_host",
+            target="asset-tenant-a",
+            parameters={"reason": "R4 supervised rejection test"},
+            pending_action_id=reject_id,
+            ttl_seconds=300,
+        )
+        reject_assertion = mint_assertion(
+            secret=assertion_secret, subject="operator-a", role="admin",
+            tenant_id="tenant-a", method="POST",
+            path=f"/v1/gate/reject/{reject_id}",
+            request_id="integration-gate-reject",
+        )
+        rejected = client.post(
+            f"/v1/gate/reject/{reject_id}",
+            headers={**dashboard_headers, "X-CG-Operator-Assertion": reject_assertion},
+        )
+        assert rejected.status_code == 200, rejected.text
+        with main._mod.db() as conn:
+            rejected_row = conn.execute(
+                "SELECT * FROM pending_actions WHERE id=?", (reject_id,)
+            ).fetchone()
+        assert rejected_row is not None
+        if "status" in rejected_row.keys():
+            assert str(rejected_row["status"]).lower() in {"rejected", "cancelled", "denied"}
+
         denial_audit_assertion = mint_assertion(
             secret=assertion_secret, subject="operator-a", role="admin",
             tenant_id="tenant-a", method="GET", path="/v1/audit",
