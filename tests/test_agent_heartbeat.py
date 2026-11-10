@@ -75,3 +75,47 @@ def test_legacy_queued_registration_is_superseded_after_reconnect(monkeypatch):
     ok, response = agent._deliver_queued_record("/v1/detections", {"event_id": "evt-1"})
     assert ok and response["status"] == "accepted"
     assert calls == [("/v1/detections", {"event_id": "evt-1"})]
+
+
+
+def test_permanent_auth_rejection_is_not_queued_and_marks_agent_revoked(monkeypatch):
+    class QueueSpy:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue(self, *args):
+            self.calls.append(args)
+            return len(self.calls)
+
+    queue = QueueSpy()
+    monkeypatch.setattr(agent, "queue", queue)
+    monkeypatch.setattr(agent, "AUTH_REJECTED", False)
+
+    def forbidden(_request, timeout=10):
+        raise agent.urllib.error.HTTPError(
+            "http://controller/v1/detections", 403, "Forbidden", {}, None
+        )
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", forbidden)
+    ok, response = agent.cg_api_post(
+        "/v1/detections", {"asset_id": "revoked-host"}, queue_on_failure=True
+    )
+    assert not ok
+    assert response["auth_error"] == 403
+    assert agent.AUTH_REJECTED is True
+    assert queue.calls == []
+
+
+def test_get_auth_rejection_marks_agent_for_shutdown(monkeypatch):
+    monkeypatch.setattr(agent, "AUTH_REJECTED", False)
+
+    def unauthorized(_request, timeout=10):
+        raise agent.urllib.error.HTTPError(
+            "http://controller/v1/agent/commands", 401, "Unauthorized", {}, None
+        )
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", unauthorized)
+    ok, response = agent.cg_api_get("/v1/agent/commands?asset_id=host-a")
+    assert not ok
+    assert response["http_error"] == 401
+    assert agent.AUTH_REJECTED is True
