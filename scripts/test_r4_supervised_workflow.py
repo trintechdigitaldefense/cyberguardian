@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "control-plane" / "api"))
 sys.path.insert(0, str(ROOT / "agents" / "linux-ebpf"))
 
-import agent_credentials
 import command_signing
 import containment
 from operator_context import mint_assertion
@@ -61,7 +60,8 @@ def operator_headers(method: str, path: str, request_id: str):
 
 
 def main() -> int:
-    agent = agent_credentials.get_agent_credential("compose-host")
+    credential_file = Path(os.environ["CG_AGENT_TEST_CREDENTIAL_FILE"])
+    agent = json.loads(credential_file.read_text(encoding="utf-8"))
     assert agent and agent.get("status") == "active", "Compose test agent must be enrolled and active"
     agent_headers = {"X-API-Key": agent["api_key"], "X-Tenant-ID": TENANT}
     nad_headers = {"X-API-Key": os.environ["CG_NAD_API_KEY"]}
