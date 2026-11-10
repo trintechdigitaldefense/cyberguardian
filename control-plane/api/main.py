@@ -315,7 +315,6 @@ def _request_scoped_db():
 _mod.db = _request_scoped_db
 _AGENT_IDEMPOTENCY_PATHS = {"/v1/detections", "/v1/agent/command-result"}
 _AGENT_EVENT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
-_AGENT_IDEMPOTENCY_RETENTION_SECONDS = 30 * 24 * 60 * 60
 _AGENT_IDEMPOTENCY_MAX_RECORDS = 200000
 
 
@@ -412,10 +411,9 @@ async def _agent_event_idempotency(request: Request, call_next):
             )
 
         now = time.time()
-        connection.execute(
-            "DELETE FROM cg_agent_idempotency WHERE created_at < ?",
-            (now - _AGENT_IDEMPOTENCY_RETENTION_SECONDS,),
-        )
+        # Keep replay records for the full lifetime of offline queue entries.
+        # The queue has no automatic expiry, so this table is bounded by a
+        # fail-closed capacity limit rather than deleting old idempotency keys.
         count = connection.execute("SELECT COUNT(*) FROM cg_agent_idempotency").fetchone()[0]
         if int(count) >= _AGENT_IDEMPOTENCY_MAX_RECORDS:
             connection.rollback()
