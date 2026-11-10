@@ -467,7 +467,8 @@ async def _agent_scope_and_command_signing(request: Request, call_next):
             return JSONResponse({"detail": "agent tenant does not match enrolled tenant"}, status_code=403)
         record = bound_record
     elif record:
-        if not api_key or api_key != str(record.get("api_key") or ""):
+        enrolled_key = str(record.get("api_key") or "")
+        if not api_key or not enrolled_key or not hmac.compare_digest(api_key, enrolled_key):
             return JSONResponse({"detail": "agent key does not match asset"}, status_code=403)
         if tenant_id != str(record.get("tenant_id") or "default"):
             return JSONResponse({"detail": "agent tenant does not match enrolled tenant"}, status_code=403)
