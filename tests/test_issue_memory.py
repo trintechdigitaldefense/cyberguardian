@@ -69,7 +69,7 @@ def test_update_issue_is_serialized_and_persists(tmp_path, monkeypatch):
 
 def test_corrupt_issue_memory_fails_closed_without_rewriting(tmp_path, monkeypatch):
     path = tmp_path / "issues.jsonl"
-    path.write_text("{broken-json}\\n")
+    path.write_text("{broken-json}\n")
     monkeypatch.setattr(issue_memory, "STORE", path)
     try:
         issue_memory.remember_issue("new", "asset-new")
@@ -77,4 +77,4 @@ def test_corrupt_issue_memory_fails_closed_without_rewriting(tmp_path, monkeypat
         pass
     else:
         raise AssertionError("corrupt issue memory must block read-modify-write")
-    assert path.read_text() == "{broken-json}\\n"
+    assert path.read_text() == "{broken-json}\n"
