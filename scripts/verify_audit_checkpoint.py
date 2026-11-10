@@ -36,11 +36,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
     args = parser.parse_args()
-    raw_key = _checkpoint_key_hex()
     try:
+        raw_key = _checkpoint_key_hex()
         key = bytes.fromhex(raw_key)
-    except ValueError:
-        print("Checkpoint verification failed: invalid hexadecimal key", file=sys.stderr)
+    except ValueError as exc:
+        print(f"Checkpoint verification failed: {exc}", file=sys.stderr)
         return 2
     if len(key) < 32:
         print("Checkpoint verification failed: set CG_AUDIT_CHECKPOINT_KEY_HEX to at least 64 hex characters", file=sys.stderr)
