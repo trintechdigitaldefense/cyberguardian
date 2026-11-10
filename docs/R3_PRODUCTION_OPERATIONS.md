@@ -146,7 +146,7 @@ The command reports the record count and current chain head and exits non-zero i
 Export a consistent, integrity-verified snapshot to a protected destination:
 
 ```bash
-CG_DATA_DIR=/path/to/persistent/cyberguardian-data \\
+CG_DATA_DIR=/path/to/persistent/cyberguardian-data \
   python3 scripts/export_audit_ledger.py --out /path/to/encrypted-export/audit-ledger.jsonl
 ```
 
