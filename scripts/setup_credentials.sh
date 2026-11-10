@@ -21,9 +21,11 @@ path = data / "credentials.json"
 existing = {}
 if path.exists():
     try:
-        existing = json.loads(path.read_text())
-    except Exception:
-        pass
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"ERROR: existing credentials file is unreadable; refusing to overwrite it: {exc}")
+    if not isinstance(existing, dict):
+        raise SystemExit("ERROR: existing credentials file has an invalid schema; refusing to overwrite it.")
 
 print("============================================")
 print(" CyberGuardian first-run credential setup")
@@ -51,12 +53,29 @@ api_key = input("Admin API key (empty = auto-generate): ").strip()
 if not api_key:
     api_key = "cg_" + secrets.token_urlsafe(32)
 agent_key = existing.get("agent_api_key") or ("cg_agent_" + secrets.token_urlsafe(24))
+used = {api_key, agent_key}
+service_credentials = {}
+for field in (
+    "dashboard_api_key",
+    "nad_api_key",
+    "operator_assertion_secret",
+    "decision_service_api_key",
+):
+    value = str(existing.get(field) or "").strip()
+    if len(value.encode("utf-8")) < 32 or value in used:
+        value = secrets.token_urlsafe(48)
+    while value in used:
+        value = secrets.token_urlsafe(48)
+    service_credentials[field] = value
+    used.add(value)
+
 cred = dict(existing)
 cred.update({
     "admin_user": user,
     "admin_password_hash": password_hash,
     "api_key": api_key,
     "agent_api_key": agent_key,
+    **service_credentials,
 })
 cred.pop("admin_password", None)
 
@@ -75,7 +94,12 @@ finally:
 
 print(f"Saved hashed credentials: {path}")
 print(f"Admin API key (save this): {api_key}")
-print(f"Agent API key (save this): {agent_key}")
+print(f"Agent API key (lab bootstrap only; save securely): {agent_key}")
+print("Service credentials (save these for production deployment):")
+print(f"CG_DASHBOARD_API_KEY={service_credentials['dashboard_api_key']}")
+print(f"CG_NAD_API_KEY={service_credentials['nad_api_key']}")
+print(f"CG_OPERATOR_ASSERTION_SECRET={service_credentials['operator_assertion_secret']}")
+print(f"DECISION_SERVICE_API_KEY={service_credentials['decision_service_api_key']}")
 print("Password is stored as a PBKDF2 hash, not plaintext.")
 print("Done. Keep keys secret. Never commit credentials.json.")
 PY
