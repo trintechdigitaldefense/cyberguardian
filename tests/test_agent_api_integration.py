@@ -217,6 +217,12 @@ def test_enrolled_agent_receives_only_tenant_bound_signed_commands(tmp_path, mon
         )
         event_id = hashlib.sha256(canonical_event.encode("utf-8")).hexdigest()
         idempotent_headers = {**headers, "X-CG-Event-ID": event_id}
+        mismatched_event = client.post(
+            "/v1/agent/command-result",
+            headers={**headers, "X-CG-Event-ID": "0" * 64},
+            json=command_result_payload,
+        )
+        assert mismatched_event.status_code == 400, mismatched_event.text
         reported = client.post(
             "/v1/agent/command-result",
             headers=idempotent_headers,
