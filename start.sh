@@ -210,8 +210,8 @@ if ! wait_http "dashboard" "http://127.0.0.1:3000/health" 20; then
   exit 1
 fi
 
-if [ "${CG_DISABLE_LOCAL_AGENT:-0}" = "1" ] || { { [ "${CG_HARDENED:-0}" = "1" ] || [ "${CG_HARDENED:-}" = "true" ]; } && [ "${CG_ENABLE_LAB_BOOTSTRAP_AGENT:-0}" != "1" ]; }; then
-  echo "Local agent auto-start disabled (explicit disable or hardened-mode safety default)."
+if [ "${CG_DISABLE_LOCAL_AGENT:-0}" = "1" ]; then
+  echo "Local agent auto-start disabled (explicit disable)."
 elif [ "$STRICT_AGENT_MODE" = "1" ]; then
   AGENT_ENV_FILE="${CG_AGENT_ENV_FILE:-}"
   if [ -n "${CG_AGENT_ASSET_ID:-}" ]; then
@@ -233,6 +233,8 @@ elif [ "$STRICT_AGENT_MODE" = "1" ]; then
         --api http://127.0.0.1:8080 --interval 60 > /tmp/cg-agent.log 2>&1 &)
     fi
   fi
+elif { { [ "${CG_HARDENED:-0}" = "1" ] || [ "${CG_HARDENED:-}" = "true" ]; } && [ "${CG_ENABLE_LAB_BOOTSTRAP_AGENT:-0}" != "1" ]; }; then
+  echo "Local bootstrap agent auto-start disabled (hardened-mode safety default)."
 else
   echo "Starting local development agent (bootstrap credentials; non-production only)..."
   (cd "$ROOT" && nohup env CYBERGUARDIAN_API=http://127.0.0.1:8080 CG_CONTROLLER_URL=http://127.0.0.1:8080 \
