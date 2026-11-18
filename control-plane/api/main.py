@@ -70,27 +70,20 @@ def _parse_audit_window(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _historical_audit_tenant(fields: dict, tenant_id: str) -> str | None:
-    explicit = fields.get("tenant_id")
-    if explicit is not None:
-        return str(explicit) if str(explicit) == tenant_id else None
-    detail = str(fields.get("detail") or "")
-    marker = detail.rfind("{")
-    if marker >= 0:
-        try:
-            context = json.loads(detail[marker:])
-        except (ValueError, TypeError):
-            context = {}
-        candidate = context.get("tenant_id") if isinstance(context, dict) else None
-        if candidate is not None:
-            return str(candidate) if str(candidate) == tenant_id else None
-    asset_id = str(fields.get("asset_id") or "")
-    if asset_id and _asset_matches_tenant(asset_id, tenant_id):
-        return tenant_id
-    pending_id = str(fields.get("pending_action_id") or fields.get("id") or "")
-    if pending_id and _pending_action_matches_tenant(pending_id, tenant_id):
-        return tenant_id
-    return None
+def _historical_audit_tenant(envelope: dict, tenant_id: str) -> str | None:
+    """Return only the tenant bound to the hash-chained event envelope.
+
+    Audit detail, asset ownership and pending-action state are mutable or
+    caller-controlled context. They must never be used to reconstruct the
+    tenant boundary for historical records. Legacy events without an
+    envelope-level tenant_id are intentionally excluded from client reports.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    event_tenant = envelope.get("tenant_id")
+    if not isinstance(event_tenant, str) or not event_tenant:
+        return None
+    return event_tenant if event_tenant == tenant_id else None
 
 
 @app.get("/v1/audit/history")
@@ -145,7 +138,7 @@ async def historical_audit(
                             recorded_at = float(record["recorded_at"])
                             event_at = datetime.fromtimestamp(recorded_at, timezone.utc)
                             if start_at <= event_at < end_at:
-                                scoped_tenant = _historical_audit_tenant(fields, tenant_id)
+                                scoped_tenant = _historical_audit_tenant(envelope, tenant_id)
                                 if scoped_tenant == tenant_id:
                                     matching_count += 1
                                     if offset <= matching_count - 1 < offset + limit:
@@ -293,10 +286,12 @@ def _write_audit_with_operator(*args, **kwargs):
     # Commit the independent append-only evidence first. If its chain is
     # corrupt or storage is unavailable, do not report an audit write as
     # successful; the original SQLite audit remains a queryable index.
-    _append_audit_ledger_event(
-        _AUDIT_LEDGER_PATH,
-        {"args": list(args), "fields": kwargs},
-    )
+    ledger_event = {"args": list(args), "fields": kwargs}
+    if claims:
+        # Bind tenant identity outside caller-controlled fields and detail.
+        # The envelope is covered by the append-only ledger hash chain.
+        ledger_event["tenant_id"] = str(claims["tenant_id"])
+    _append_audit_ledger_event(_AUDIT_LEDGER_PATH, ledger_event)
     return _original_write_audit(*args, **kwargs)
 
 
