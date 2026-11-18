@@ -93,7 +93,7 @@ def test_concurrent_duplicate_outbox_delivery_appends_one_record(tmp_path):
 def test_factory_sink_matches_transactional_outbox_callback_contract(tmp_path):
     ledger = tmp_path / "audit.jsonl"
     sink = make_audit_ledger_sink(ledger)
-    sink("e" * 32, {"operation_id": "op-1", "phase": "accepted"})
+    sink("e" * 32, {"operation_id": "op-1", "tenant_id": "tenant-a", "phase": "accepted"})
 
     records = [
         __import__("json").loads(line)
@@ -101,4 +101,6 @@ def test_factory_sink_matches_transactional_outbox_callback_contract(tmp_path):
     ]
     assert records[0]["event_id"] == "e" * 32
     assert records[0]["event"]["source"] == "cyberguardian_transactional_outbox"
+    assert records[0]["event"]["tenant_id"] == "tenant-a"
+    assert records[0]["event"]["fields"]["tenant_id"] == "tenant-a"
     assert records[0]["event"]["fields"]["operation_id"] == "op-1"
