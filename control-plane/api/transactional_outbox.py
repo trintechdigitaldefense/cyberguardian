@@ -62,7 +62,7 @@ class SQLiteTransactionalOutbox:
                     tenant_id TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
                     request_hash TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('completed')),
+                    status TEXT NOT NULL CHECK(status IN ('completed', 'reconciliation_required')),
                     result_json TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -294,6 +294,54 @@ class SQLiteTransactionalOutbox:
         result = dict(row)
         result["result"] = json.loads(result.pop("result_json"))
         return result
+
+    def mark_reconciliation_required(
+        self, *, tenant_id: str, operation_id: str, reason: str,
+        now: float | None = None,
+    ) -> bool:
+        """Persist an operator-reconciliation state and an ordered outbox event."""
+        tenant_id = str(tenant_id).strip()
+        operation_id = str(operation_id).strip()
+        reason = str(reason).strip()
+        if not tenant_id or not operation_id or not reason:
+            raise ValueError("tenant_id, operation_id and reason are required")
+        timestamp = time.time() if now is None else float(now)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM cg_operations WHERE tenant_id=? AND operation_id=?",
+                (tenant_id, operation_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("operation not found for tenant")
+            if row["status"] == "reconciliation_required":
+                connection.commit()
+                return False
+            connection.execute(
+                """UPDATE cg_operations SET status='reconciliation_required',
+                   updated_at=? WHERE tenant_id=? AND operation_id=?""",
+                (timestamp, tenant_id, operation_id),
+            )
+            sequence = int(connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM cg_outbox WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()[0])
+            self._enqueue(
+                connection, operation_id, tenant_id, sequence,
+                "operation_reconciliation_required",
+                {"operation_id": operation_id, "tenant_id": tenant_id,
+                 "phase": "reconciliation_required", "reason": reason[:1000]},
+                timestamp,
+            )
+            connection.commit()
+            return True
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def outbox_counts(self) -> dict[str, int]:
         with self._connect() as connection:
