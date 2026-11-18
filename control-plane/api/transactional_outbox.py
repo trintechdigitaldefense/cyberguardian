@@ -238,8 +238,9 @@ class SQLiteTransactionalOutbox:
             cursor = connection.execute(
                 """UPDATE cg_outbox SET status='delivered', delivered_at=?,
                    lease_owner=NULL, lease_until=NULL, last_error=NULL
-                   WHERE event_id=? AND status='inflight' AND lease_owner=?""",
-                (timestamp, event_id, worker_id),
+                   WHERE event_id=? AND status='inflight' AND lease_owner=?
+                     AND lease_until>?""",
+                (timestamp, event_id, worker_id, timestamp),
             )
             if cursor.rowcount != 1:
                 raise OutboxLeaseLost("outbox event is not leased by this worker")
@@ -253,9 +254,10 @@ class SQLiteTransactionalOutbox:
             cursor = connection.execute(
                 """UPDATE cg_outbox SET status='pending', next_attempt_at=?,
                    lease_owner=NULL, lease_until=NULL, last_error=?
-                   WHERE event_id=? AND status='inflight' AND lease_owner=?""",
+                   WHERE event_id=? AND status='inflight' AND lease_owner=?
+                     AND lease_until>?""",
                 (timestamp + max(0.0, float(delay_seconds)), str(error)[:1000],
-                 event_id, worker_id),
+                 event_id, worker_id, timestamp),
             )
             if cursor.rowcount != 1:
                 raise OutboxLeaseLost("outbox event is not leased by this worker")
