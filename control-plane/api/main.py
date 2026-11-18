@@ -1019,6 +1019,35 @@ def _pilot_audit_readiness(run_id: str) -> dict:
             os.close(lock_fd)
 
 
+def _response_with_preserved_headers(original: Response, content: bytes, *, body_changed: bool = False) -> Response:
+    """Rebuild a consumed response without discarding end-to-end metadata.
+
+    Preserve repeated headers (notably Set-Cookie), content type, CORS/cache
+    controls and the original background task. Recompute Content-Length because
+    the body may have changed; discard validators/range metadata only when it
+    has changed. Hop-by-hop transport headers are never forwarded.
+    """
+    hop_by_hop = {
+        b"content-length", b"transfer-encoding", b"connection", b"keep-alive",
+        b"proxy-authenticate", b"proxy-authorization", b"te", b"trailer", b"upgrade",
+    }
+    changed_body_headers = {b"etag", b"content-md5", b"digest", b"content-range", b"last-modified"}
+    copied_headers = [
+        (key, value)
+        for key, value in original.raw_headers
+        if key.lower() not in hop_by_hop
+        and not (body_changed and key.lower() in changed_body_headers)
+    ]
+    replacement = Response(
+        content=content,
+        status_code=original.status_code,
+        background=getattr(original, "background", None),
+    )
+    replacement.raw_headers = copied_headers
+    replacement.raw_headers.append((b"content-length", str(len(content)).encode("ascii")))
+    return replacement
+
+
 @app.middleware("http")
 async def _r4_pilot_audit_evidence(request: Request, call_next):
     method = request.method.upper()
@@ -1152,14 +1181,6 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
             "records": audit["records"],
             "verified_events": audit["events"],
         }
-        return JSONResponse(payload, status_code=response.status_code)
-    return Response(
-        content=raw_body,
-        status_code=response.status_code,
-        headers={
-            key: value for key, value in response.headers.items()
-            if key.lower() not in {"content-length", "content-type", "transfer-encoding"}
-        },
-        media_type=response.media_type,
-        background=getattr(response, "background", None),
-    )
+        scorecard_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return _response_with_preserved_headers(response, scorecard_body, body_changed=True)
+    return _response_with_preserved_headers(response, raw_body)
