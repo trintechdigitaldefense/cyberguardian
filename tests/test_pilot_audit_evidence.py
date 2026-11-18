@@ -149,3 +149,75 @@ def test_pilot_actions_write_durable_events_and_scorecard_checks_them(tmp_path, 
         assert audit["ok"] is True, body
         assert set(body["audit_evidence"]["verified_events"]) == REQUIRED_EVENTS
         assert body["audit_evidence"]["records"] >= 4
+def test_pilot_action_is_not_started_when_preflight_audit_write_fails(tmp_path, monkeypatch):
+    main, data_dir, admin_key = _load_gateway(tmp_path, monkeypatch)
+    # Begin from a known disabled state so the test can detect any mutation.
+    main._mod.save_gate({"client_mode": False})
+    run_id = str(uuid.uuid4())
+    headers = {
+        "X-API-Key": admin_key,
+        "X-Tenant-ID": "default",
+        "X-CG-Pilot-Run-ID": run_id,
+        "X-Request-ID": "pilot-preflight-failure",
+    }
+
+    def fail_audit(**_kwargs):
+        raise PermissionError("simulated audit ledger outage")
+
+    monkeypatch.setattr(main._mod, "write_audit", fail_audit)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/client-mode", headers=headers, json={"client_mode": True}
+        )
+
+    assert response.status_code == 503
+    assert response.json()["operation_status"] == "not_started"
+    assert response.json()["operation_id"]
+    assert main._mod.load_gate()["client_mode"] is False
+
+
+def test_pilot_action_reports_unknown_outcome_if_completion_audit_fails(tmp_path, monkeypatch):
+    main, data_dir, admin_key = _load_gateway(tmp_path, monkeypatch)
+    main._mod.save_gate({"client_mode": False})
+    run_id = str(uuid.uuid4())
+    headers = {
+        "X-API-Key": admin_key,
+        "X-Tenant-ID": "default",
+        "X-CG-Pilot-Run-ID": run_id,
+        "X-Request-ID": "pilot-completion-failure",
+    }
+    original_write = main._mod.write_audit
+    calls = []
+
+    def fail_completion(**kwargs):
+        calls.append(kwargs.get("event"))
+        if kwargs.get("event") == "pilot_client_mode_on":
+            raise PermissionError("simulated audit failure after operation")
+        return original_write(**kwargs)
+
+    monkeypatch.setattr(main._mod, "write_audit", fail_completion)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/client-mode", headers=headers, json={"client_mode": True}
+        )
+
+    assert calls == ["pilot_action_started", "pilot_client_mode_on"]
+    assert response.status_code == 503
+    assert response.json()["operation_status"] == "outcome_unknown"
+    operation_id = response.json()["operation_id"]
+    assert operation_id
+    # The operation ran only after its durable intent was recorded. A 503 here
+    # is explicitly an unknown outcome, not a safe signal to blindly retry.
+    assert main._mod.load_gate()["client_mode"] is True
+    integrity = main._audit_ledger.verify_ledger(main._AUDIT_LEDGER_PATH)
+    assert integrity["valid"] is True
+    records = [
+        json.loads(line)
+        for line in main._AUDIT_LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(
+        record["event"]["fields"].get("event") == "pilot_action_started"
+        and operation_id in record["event"]["fields"].get("detail", "")
+        for record in records
+    )
+
