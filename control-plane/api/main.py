@@ -1015,7 +1015,6 @@ def _pilot_audit_readiness(run_id: str) -> dict:
 
 @app.middleware("http")
 async def _r4_pilot_audit_evidence(request: Request, call_next):
-    response = await call_next(request)
     method = request.method.upper()
     path = request.url.path
     run_id = str(request.headers.get("X-CG-Pilot-Run-ID") or "").strip()
@@ -1024,8 +1023,47 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
     )
     is_scorecard = method == "GET" and path == "/v1/pilot/scorecard"
     if not monitored and not is_scorecard:
-        return response
+        return await call_next(request)
 
+    if monitored:
+        tenant_id = str(
+            request.headers.get("X-Tenant-ID")
+            or getattr(request.state, "tenant_id", "")
+            or os.environ.get("CG_TENANT_ID", "default")
+        )
+        operation_id = str(request.headers.get("X-Request-ID") or os.urandom(16).hex())
+        intent = {
+            "pilot_run_id": run_id,
+            "tenant_id": tenant_id,
+            "operation_id": operation_id,
+            "phase": "started",
+            "http_method": method,
+            "path": path,
+        }
+        # Persist a durable intent before invoking the endpoint. If this write
+        # fails, call_next is never reached and the business operation cannot
+        # mutate state without an audit record proving the attempt.
+        try:
+            _mod.write_audit(
+                event="pilot_action_started",
+                action=method,
+                target=path,
+                actor="r4-owner-pilot",
+                detail=json.dumps(intent, sort_keys=True, separators=(",", ":")),
+                result_ok=0,
+            )
+        except Exception:
+            _logger.exception("R4 pilot action preflight audit write failed")
+            return JSONResponse(
+                {
+                    "detail": "pilot action was not started because its audit intent could not be persisted",
+                    "operation_id": operation_id,
+                    "operation_status": "not_started",
+                },
+                status_code=503,
+            )
+
+    response = await call_next(request)
     chunks = []
     async for chunk in response.body_iterator:
         chunks.append(chunk)
@@ -1049,14 +1087,11 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
                 if isinstance(payload, dict) and payload.get("status") == "blocked"
                 else "pilot_remediation_not_blocked"
             )
-        tenant_id = str(
-            request.headers.get("X-Tenant-ID")
-            or getattr(request.state, "tenant_id", "")
-            or os.environ.get("CG_TENANT_ID", "default")
-        )
         evidence = {
             "pilot_run_id": run_id,
             "tenant_id": tenant_id,
+            "operation_id": operation_id,
+            "phase": "completed",
             "http_status": int(response.status_code),
             "result_status": str(payload.get("status") or "") if isinstance(payload, dict) else "",
         }
@@ -1070,9 +1105,13 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
                 result_ok=1 if 200 <= response.status_code < 300 else 0,
             )
         except Exception:
-            _logger.exception("R4 pilot action could not be durably audited")
+            _logger.exception("R4 pilot action completion audit write failed")
             return JSONResponse(
-                {"detail": "pilot action audit write failed; audit readiness is not established"},
+                {
+                    "detail": "pilot action outcome could not be fully audited; reconcile state before retrying",
+                    "operation_id": operation_id,
+                    "operation_status": "outcome_unknown",
+                },
                 status_code=503,
             )
 
