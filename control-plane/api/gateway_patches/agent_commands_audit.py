@@ -4,7 +4,18 @@ PATCH_MARKER = "# CYBERGUARDIAN_PATCH: agent_commands_audit_v1"
 
 PATCHED_ROUTE = '''# CYBERGUARDIAN_PATCH: agent_commands_audit_v1
 from transactional_outbox import SQLiteTransactionalOutbox as _SQLiteTransactionalOutbox
-_CG_LIVE_OUTBOX = _SQLiteTransactionalOutbox(DB_PATH)
+_CG_LIVE_OUTBOX = None
+_CG_LIVE_OUTBOX_PATH = None
+
+
+def _cg_live_outbox():
+    global _CG_LIVE_OUTBOX, _CG_LIVE_OUTBOX_PATH
+    current_path = Path(DB_PATH)
+    if _CG_LIVE_OUTBOX is None or _CG_LIVE_OUTBOX_PATH != current_path:
+        _CG_LIVE_OUTBOX = _SQLiteTransactionalOutbox(current_path)
+        _CG_LIVE_OUTBOX_PATH = current_path
+    return _CG_LIVE_OUTBOX
+
 
 @app.get("/v1/agent/commands")
 async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depends(require_api_key)):
@@ -72,7 +83,7 @@ async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depen
         ).encode("utf-8")
     ).hexdigest()
     with db() as connection:
-        operation = _CG_LIVE_OUTBOX.execute_operation_on_connection(
+        operation = _cg_live_outbox().execute_operation_on_connection(
             connection,
             tenant_id=tenant_id,
             idempotency_key=uuid.uuid4().hex,
