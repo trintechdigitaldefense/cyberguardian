@@ -78,7 +78,7 @@ def append_outbox_event_once(
             "event": event,
         }
         record["hash"] = audit_ledger._hash_record(record)
-        encoded = audit_ledger._canonical(record) + b"\\n"
+        encoded = audit_ledger._canonical(record) + b"\n"
         flags = os.O_CREAT | os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(str(path), flags, 0o600)
         try:
