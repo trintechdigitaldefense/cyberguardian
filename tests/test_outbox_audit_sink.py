@@ -52,7 +52,7 @@ def test_outbox_sink_rejects_same_id_with_different_content(tmp_path):
 def test_outbox_sink_fails_closed_on_corrupt_existing_chain(tmp_path):
     ledger = tmp_path / "audit.jsonl"
     audit_ledger.append_event(ledger, {"fields": {"event": "original"}})
-    ledger.write_text('{"not":"a valid chain"}\\n', encoding="utf-8")
+    ledger.write_text('{"not":"a valid chain"}\n', encoding="utf-8")
 
     with pytest.raises(audit_ledger.LedgerIntegrityError):
         append_outbox_event_once(
