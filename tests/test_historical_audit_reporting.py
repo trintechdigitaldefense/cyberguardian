@@ -225,3 +225,25 @@ def test_historical_audit_excludes_legacy_records_without_immutable_tenant(tmp_p
             assert response.json()["total"] == 0
             assert response.json()["items"] == []
 
+def test_historical_audit_genesis_snapshot_is_empty_even_when_ledger_is_populated(tmp_path, monkeypatch):
+    main, dashboard_key, _ = _load_gateway(tmp_path, monkeypatch)
+    middle = datetime(2026, 11, 5, 12, tzinfo=timezone.utc).timestamp()
+    params = {
+        "start": "2026-11-01T00:00:00Z",
+        "end": "2026-11-10T00:00:00Z",
+        "snapshot_head": main._audit_ledger.GENESIS,
+    }
+    with TestClient(main.app) as client:
+        _seed(main, "tenant-a", "event-after-genesis", middle)
+        response = client.get(
+            "/v1/audit/history",
+            params=params,
+            headers=_auth_headers(main, dashboard_key, request_id="genesis-snapshot"),
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["snapshot_head"] == main._audit_ledger.GENESIS
+        assert body["total"] == 0
+        assert body["items"] == []
+        assert body["has_more"] is False
+

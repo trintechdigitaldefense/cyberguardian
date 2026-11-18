@@ -126,7 +126,10 @@ async def historical_audit(
                 return JSONResponse({"detail": "audit history integrity verification failed"}, status_code=503)
             pinned_head = str(snapshot_head or integrity.get("head") or _audit_ledger.GENESIS)
             found_head = pinned_head == _audit_ledger.GENESIS
-            if ledger_path.exists():
+            # GENESIS represents the empty ledger snapshot. A valid populated
+            # ledger may exist now, but none of its later records belong to
+            # that pinned snapshot, so do not scan or include them.
+            if pinned_head != _audit_ledger.GENESIS and ledger_path.exists():
                 with ledger_path.open("r", encoding="utf-8") as handle:
                     for line in handle:
                         if not line.endswith("\n"):

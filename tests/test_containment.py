@@ -36,7 +36,7 @@ def test_kill_process_requires_process_identity(monkeypatch):
     })
     signals = []
     monkeypatch.setattr(c.os, "kill", lambda pid, sig: signals.append((pid, sig)))
-    result = c.kill_process("2345")
+    result = c.kill_process(str(os.getpid() + 10000))
     assert not result["ok"]
     assert "identity evidence required" in result["detail"]
     assert signals == []
@@ -48,7 +48,7 @@ def test_kill_process_rejects_hint_mismatch(monkeypatch):
     })
     signals = []
     monkeypatch.setattr(c.os, "kill", lambda pid, sig: signals.append((pid, sig)))
-    result = c.kill_process("2345", expected_hint="malware")
+    result = c.kill_process(str(os.getpid() + 10000), expected_hint="malware")
     assert not result["ok"]
     assert "hint mismatch" in result["detail"]
     assert signals == []
@@ -58,7 +58,7 @@ def test_kill_process_rejects_pid_reuse_starttime(monkeypatch):
     monkeypatch.setattr(c, "_proc_identity", lambda pid: {
         "start_time": "999", "state": "S", "cmdline": "python worker.py"
     })
-    result = c.kill_process("2345", expected_starttime="123")
+    result = c.kill_process(str(os.getpid() + 10000), expected_starttime="123")
     assert not result["ok"]
     assert "PID reuse" in result["detail"]
 
@@ -68,7 +68,7 @@ def test_kill_process_refuses_unreadable_proc_identity(monkeypatch):
     def unreadable(pid):
         raise PermissionError("procfs denied")
     monkeypatch.setattr(c, "_proc_identity", unreadable)
-    result = c.kill_process("2345", expected_starttime="123")
+    result = c.kill_process(str(os.getpid() + 10000), expected_starttime="123")
     assert not result["ok"]
     assert "unable to verify process identity" in result["detail"]
 
@@ -85,7 +85,7 @@ def test_kill_process_uses_pidfd_bound_to_same_starttime(monkeypatch):
     monkeypatch.setattr(c, "_pidfd_exited", lambda fd: True)
     monkeypatch.setattr(c.os, "close", lambda fd: None)
     monkeypatch.setattr(c.time, "sleep", lambda value: None)
-    result = c.kill_process("2345", expected_hint="worker.py")
+    result = c.kill_process(str(os.getpid() + 10000), expected_hint="worker.py")
     assert result["ok"], result
     assert calls == [(77, signal.SIGTERM)]
 
