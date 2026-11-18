@@ -40,7 +40,7 @@ def test_business_state_operation_and_outbox_commit_together(tmp_path):
     assert result.status == "completed"
     assert result.replayed is False
     assert store.operation(tenant_id="tenant-a", operation_id=result.operation_id)["result"] == {"accepted": True}
-    assert store.outbox_counts() == {"pending": 2, "inflight": 0, "delivered": 0}
+    assert store.outbox_counts() == {"pending": 2, "inflight": 0, "delivered": 0, "review_required": 0}
     with store._connect() as connection:
         assert connection.execute("SELECT value FROM business_state WHERE name='changed'").fetchone()[0] == 1
         events = connection.execute(
