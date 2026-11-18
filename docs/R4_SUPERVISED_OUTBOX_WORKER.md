@@ -32,7 +32,7 @@ The `outbox-worker` Compose service uses the same API image and the same persist
 - SQLite database: `/app/data/cyberguardian.db`
 - Hash-chained audit ledger: `/app/data/audit_ledger.jsonl`
 
-It receives no administrator, dashboard, decision-service or agent API credentials. It restarts automatically and has a Docker health check. A non-empty review queue causes `--health-once` to return a non-zero status so operators can see that intervention is required.
+It receives no administrator, dashboard, decision-service or agent API credentials. It refuses to create a new database if the configured API database is missing, preventing silent operation against a separate empty file; the restart policy allows it to start after API database initialization. It restarts automatically and has a Docker health check. A non-empty review queue causes `--health-once` to return a non-zero status so operators can see that intervention is required.
 
 Start or update the stack from `deploy/docker` using the existing deployment procedure. Do not run the worker against a different database or ledger path from the API. Keep the SQLite database and WAL files on a local filesystem with reliable SQLite locking; do not share a SQLite database file over an unsupported network filesystem or between separate hosts.
 
