@@ -121,6 +121,7 @@ def test_worker_uses_bounded_exponential_backoff_then_review_queue(tmp_path):
     assert "ledger temporarily unavailable" in review[0]["last_error"]
     metrics = store.queue_metrics(now=clock())
     assert metrics["review_required"] == 1
+    assert metrics["retry_count"] == 1
     assert metrics["review_alert"] is True
     assert worker.health()["status"] == "review_required"
 
