@@ -3,19 +3,19 @@
 PATCH_MARKER = "# CYBERGUARDIAN_PATCH: agent_commands_audit_v1"
 
 PATCHED_ROUTE = '''# CYBERGUARDIAN_PATCH: agent_commands_audit_v1
+from transactional_outbox import SQLiteTransactionalOutbox as _SQLiteTransactionalOutbox
+_CG_LIVE_OUTBOX = _SQLiteTransactionalOutbox(DB_PATH)
+
 @app.get("/v1/agent/commands")
 async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depends(require_api_key)):
     """Atomically mark queued commands delivered and persist their audit outbox events."""
-    import hashlib\n    from transactional_outbox import SQLiteTransactionalOutbox
-
-    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
+    import hashlib\n    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
     if not ok_key:
         raise HTTPException(403, f"Agent commands rejected: {key_why}")
 
     tenant_id = str(getattr(request.state, "tenant_id", "") or "default")
     now = time.time()
     delivered = []
-    outbox = SQLiteTransactionalOutbox(DB_PATH)
 
     def apply_delivery(connection, operation_id):
         expired_ids = []
@@ -72,7 +72,7 @@ async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depen
         ).encode("utf-8")
     ).hexdigest()
     with db() as connection:
-        operation = outbox.execute_operation_on_connection(
+        operation = _CG_LIVE_OUTBOX.execute_operation_on_connection(
             connection,
             tenant_id=tenant_id,
             idempotency_key=uuid.uuid4().hex,
