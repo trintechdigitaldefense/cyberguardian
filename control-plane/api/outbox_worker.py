@@ -172,6 +172,36 @@ class OutboxDispatcher:
                 next_health = now + health_interval
 
 
+def _write_heartbeat(path: Path, health: dict, *, now: float | None = None) -> None:
+    """Atomically publish a private heartbeat for external process health checks."""
+    timestamp = time.time() if now is None else float(now)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps({
+        "worker_id": health.get("worker_id"),
+        "timestamp": timestamp,
+        "status": health.get("status"),
+    }, sort_keys=True), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _heartbeat_status(
+    path: Path, *, now: float, stale_seconds: float
+) -> tuple[float | None, bool]:
+    """Return heartbeat age and fail closed for missing, malformed or stale files."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        timestamp = float(record["timestamp"])
+        age = float(now) - timestamp
+        if age < -5:
+            return None, True
+        age = max(0.0, age)
+        return age, age > float(stale_seconds)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None, True
+
+
 def _json_log(level: int, message: str, **fields) -> None:
     logging.log(level, json.dumps(
         {"message": message, **fields}, sort_keys=True, default=str
@@ -189,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-backoff-seconds", type=float, default=300.0)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--health-interval", type=float, default=30.0)
+    parser.add_argument("--heartbeat-file", default=None, help="Private heartbeat file for process liveness checks")
+    parser.add_argument("--health-stale-seconds", type=float, default=90.0)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--once", action="store_true", help="Process at most one event and exit")
     modes.add_argument("--health-once", action="store_true", help="Print queue/worker health and exit")
@@ -199,8 +231,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     database = Path(args.database).expanduser()
     ledger = Path(args.ledger).expanduser()
+    heartbeat_path = Path(args.heartbeat_file).expanduser() if args.heartbeat_file else None
     if not database.is_absolute() or not ledger.is_absolute():
         parser.error("--database and --ledger must be absolute paths")
+    if heartbeat_path is not None and not heartbeat_path.is_absolute():
+        parser.error("--heartbeat-file must be an absolute path")
+    if args.health_stale_seconds <= 0:
+        parser.error("--health-stale-seconds must be positive")
     if not database.is_file():
         parser.error(
             "database file does not exist; refusing to create a separate outbox database"
@@ -220,8 +257,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.health_once:
         health = dispatcher.health()
+        heartbeat_stale = False
+        if heartbeat_path is not None:
+            age, heartbeat_stale = _heartbeat_status(
+                heartbeat_path, now=time.time(),
+                stale_seconds=args.health_stale_seconds,
+            )
+            health["heartbeat_age_seconds"] = age
+            health["heartbeat_stale"] = heartbeat_stale
         print(json.dumps(health, sort_keys=True))
-        return 2 if health["review_alert"] else 0
+        return 2 if health["review_alert"] or heartbeat_stale else 0
 
     if args.review_queue:
         print(json.dumps(store.review_queue(limit=args.review_limit), sort_keys=True))
@@ -241,11 +286,16 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, request_stop)
     _json_log(logging.INFO, "outbox worker started", worker_id=worker_id)
 
+    def report_health(health: dict) -> None:
+        if heartbeat_path is not None:
+            _write_heartbeat(heartbeat_path, health)
+        _json_log(logging.INFO, "outbox worker health", **health)
+
     dispatcher.run_forever(
         stop_event,
         poll_interval=args.poll_interval,
         health_interval=args.health_interval,
-        on_health=lambda health: _json_log(logging.INFO, "outbox worker health", **health),
+        on_health=report_health,
         on_error=lambda exc: _json_log(
             logging.ERROR, "outbox worker loop error",
             error_type=type(exc).__name__, error=str(exc)[:1000],
