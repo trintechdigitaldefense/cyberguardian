@@ -108,10 +108,17 @@ def make_audit_ledger_sink(ledger_path: str | Path):
     path = Path(ledger_path)
 
     def sink(event_id: str, payload: dict[str, Any]) -> None:
+        tenant_id = str(payload.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise ValueError("outbox audit event requires a tenant_id")
         append_outbox_event_once(
             path,
             event_id=event_id,
-            event={"source": "cyberguardian_transactional_outbox", "fields": payload},
+            event={
+                "source": "cyberguardian_transactional_outbox",
+                "tenant_id": tenant_id,
+                "fields": payload,
+            },
         )
 
     return sink
