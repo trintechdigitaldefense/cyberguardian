@@ -104,13 +104,19 @@ def test_reusing_key_for_different_request_is_rejected(tmp_path):
 
 def test_idempotency_scope_is_tenant_specific(tmp_path):
     store = make_store(tmp_path)
+    def tenant_handler(connection, operation_id):
+        connection.execute(
+            "INSERT INTO business_state(name, value) VALUES (?, 1)", (operation_id,)
+        )
+        return {"operation_id": operation_id}
+
     first = store.execute_operation(
         tenant_id="tenant-a", idempotency_key="same-key",
-        request_hash="sha256:one", handler=handler,
+        request_hash="sha256:one", handler=tenant_handler,
     )
     second = store.execute_operation(
         tenant_id="tenant-b", idempotency_key="same-key",
-        request_hash="sha256:one", handler=handler,
+        request_hash="sha256:one", handler=tenant_handler,
     )
     assert first.operation_id != second.operation_id
     assert store.operation(tenant_id="tenant-a", operation_id=second.operation_id) is None
