@@ -187,3 +187,49 @@ def test_review_queue_is_tenant_attributed_and_limit_is_bounded(tmp_path):
     assert store.review_queue(limit=1)[0]["tenant_id"] == "tenant-a"
     with pytest.raises(ValueError):
         store.review_queue(limit=1001)
+
+
+def test_sink_accept_then_lease_loss_replays_same_stable_event_id(tmp_path):
+    from outbox_audit_sink import make_audit_ledger_sink
+    import audit_ledger
+    from transactional_outbox import OutboxLeaseLost
+
+    store, _ = make_store(tmp_path)
+    ledger = tmp_path / "replay-audit.jsonl"
+    sink = make_audit_ledger_sink(ledger)
+    clock = FakeClock(300)
+
+    class LoseFirstAck:
+        def __init__(self):
+            self.calls = 0
+
+        def acknowledge(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise OutboxLeaseLost("simulated worker lease loss after sink acceptance")
+            return store.acknowledge(**kwargs)
+
+    ack = LoseFirstAck()
+    class StoreProxy:
+        def __getattr__(self, name):
+            return getattr(store, name)
+
+        def acknowledge(self, **kwargs):
+            return ack.acknowledge(**kwargs)
+
+    first = OutboxDispatcher(
+        StoreProxy(), sink, worker_id="worker-old", lease_seconds=5,
+        clock=clock,
+    )
+    assert first.dispatch_once() == "lease_lost"
+    assert audit_ledger.verify_ledger(ledger)["records"] == 1
+
+    clock.advance(6)
+    second = OutboxDispatcher(
+        store, sink, worker_id="worker-recovered", lease_seconds=5,
+        clock=clock,
+    )
+    assert second.dispatch_once() == "delivered"
+    # Replay of the same stable ID was accepted as a duplicate, not appended.
+    assert audit_ledger.verify_ledger(ledger)["records"] == 1
+    assert store.outbox_counts()["delivered"] == 1
