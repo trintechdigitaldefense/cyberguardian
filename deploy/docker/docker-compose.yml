@@ -61,6 +61,12 @@ services:
       - ${CG_DATA_HOST_DIR:-../../data}:/app/data
     depends_on: [api]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "outbox_worker.py", "--database", "/app/data/cyberguardian.db", "--ledger", "/app/data/audit_ledger.jsonl", "--health-once"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks: [cg-backend]
   dashboard:
     build: ../../dashboard
