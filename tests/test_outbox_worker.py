@@ -234,3 +234,27 @@ def test_sink_accept_then_lease_loss_replays_same_stable_event_id(tmp_path):
     # Replay of the same stable ID was accepted as a duplicate, not appended.
     assert audit_ledger.verify_ledger(ledger)["records"] == 1
     assert store.outbox_counts()["delivered"] == 1
+
+
+def test_heartbeat_is_atomic_private_and_stale_detection_fails_closed(tmp_path):
+    from outbox_worker import _heartbeat_status, _write_heartbeat
+
+    path = tmp_path / "worker.heartbeat"
+    _write_heartbeat(
+        path, {"worker_id": "worker-a", "status": "healthy"}, now=100
+    )
+    assert path.exists()
+    assert path.stat().st_mode & 0o777 == 0o600
+    age, stale = _heartbeat_status(path, now=150, stale_seconds=90)
+    assert age == 50
+    assert stale is False
+
+    age, stale = _heartbeat_status(path, now=191, stale_seconds=90)
+    assert age == 91
+    assert stale is True
+
+    missing_age, missing_stale = _heartbeat_status(
+        tmp_path / "missing.heartbeat", now=200, stale_seconds=90
+    )
+    assert missing_age is None
+    assert missing_stale is True
