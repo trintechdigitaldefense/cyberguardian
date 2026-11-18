@@ -82,7 +82,7 @@ class OutboxDispatcher:
             self.sink(event["event_id"], event["payload"])
         except Exception as exc:
             # Do not expose event payloads or tenant data in worker logs.
-            safe_error = f"{type(exc).__name__}: {str(exc)}"[:1000]
+            safe_error = f"{type(exc).__name__}: audit sink delivery failed"[:1000]
             try:
                 outcome = self.store.retry_or_review(
                     event_id=event["event_id"],
@@ -163,7 +163,12 @@ class OutboxDispatcher:
 
             now = self.clock()
             if on_health and now >= next_health:
-                on_health(self.health())
+                try:
+                    on_health(self.health())
+                except Exception as exc:
+                    self.last_error = f"{type(exc).__name__}: worker health reporting failed"
+                    if on_error:
+                        on_error(exc)
                 next_health = now + health_interval
 
 
