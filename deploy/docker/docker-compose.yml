@@ -34,6 +34,34 @@ services:
       CG_NAD_API_KEY: ${CG_NAD_API_KEY:?set CG_NAD_API_KEY (unique 32+ random bytes)}
     depends_on: [api]
     networks: [cg-backend]
+  outbox-worker:
+    build: ../../control-plane/api
+    command:
+      - python
+      - outbox_worker.py
+      - --database
+      - /app/data/cyberguardian.db
+      - --ledger
+      - /app/data/audit_ledger.jsonl
+      - --lease-seconds
+      - "60"
+      - --max-attempts
+      - "8"
+      - --base-backoff-seconds
+      - "1"
+      - --max-backoff-seconds
+      - "300"
+      - --poll-interval
+      - "2"
+      - --health-interval
+      - "30"
+    environment:
+      CG_DATA_DIR: /app/data
+    volumes:
+      - ${CG_DATA_HOST_DIR:-../../data}:/app/data
+    depends_on: [api]
+    restart: unless-stopped
+    networks: [cg-backend]
   dashboard:
     build: ../../dashboard
     ports: ["127.0.0.1:3000:3000"]
