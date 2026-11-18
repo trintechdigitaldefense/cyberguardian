@@ -1031,11 +1031,13 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
             or getattr(request.state, "tenant_id", "")
             or os.environ.get("CG_TENANT_ID", "default")
         )
-        operation_id = str(request.headers.get("X-Request-ID") or os.urandom(16).hex())
+        request_id = str(request.headers.get("X-Request-ID") or "").strip()
+        operation_id = os.urandom(16).hex()
         intent = {
             "pilot_run_id": run_id,
             "tenant_id": tenant_id,
             "operation_id": operation_id,
+            "request_id": request_id,
             "phase": "started",
             "http_method": method,
             "path": path,
@@ -1091,6 +1093,7 @@ async def _r4_pilot_audit_evidence(request: Request, call_next):
             "pilot_run_id": run_id,
             "tenant_id": tenant_id,
             "operation_id": operation_id,
+            "request_id": request_id,
             "phase": "completed",
             "http_status": int(response.status_code),
             "result_status": str(payload.get("status") or "") if isinstance(payload, dict) else "",
