@@ -66,10 +66,11 @@ containment, production readiness, or 24-hour service readiness.
 
 ## Validation included
 
-The tests cover atomic commit/rollback, same-key replay, request-fingerprint
-conflicts, tenant scoping, concurrent duplicate submissions, lease ownership,
-ordered dispatch, delivery retry, and the crash window after a receiver accepts
-an event but before the sender acknowledges it. The crash-window test
+The tests cover atomic commit/rollback (including a hard subprocess exit),
+same-key replay, request-fingerprint conflicts, tenant scoping, concurrent
+duplicate submissions and worker claims, lease ownership/expiry, ordered
+dispatch, delivery retry, reconciliation state, and the crash window after a
+receiver accepts an event but before the sender acknowledges it. The crash-window test
 demonstrates why the receiver's stable-ID deduplication contract is mandatory.
 
 Physical network-loss, multi-device, power-loss, backup-restore, independent
