@@ -557,10 +557,13 @@ class SQLiteTransactionalOutbox:
                 "SELECT status, COUNT(*) AS count FROM cg_outbox GROUP BY status"
             ).fetchall()
             pending = connection.execute(
-                """SELECT MIN(created_at) AS oldest_created_at,
-                          COALESCE(SUM(CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END), 0)
-                              AS retry_count
-                   FROM cg_outbox WHERE status IN ('pending', 'inflight', 'review_required')"""
+                """SELECT MIN(created_at) AS oldest_created_at
+                   FROM cg_outbox WHERE status IN ('pending', 'inflight')"""
+            ).fetchone()
+            retries = connection.execute(
+                """SELECT COALESCE(SUM(
+                       CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END
+                   ), 0) AS retry_count FROM cg_outbox"""
             ).fetchone()
             total_attempts = connection.execute(
                 "SELECT COALESCE(SUM(attempts), 0) FROM cg_outbox"
@@ -578,7 +581,7 @@ class SQLiteTransactionalOutbox:
             "oldest_pending_seconds": (
                 max(0.0, timestamp - float(oldest)) if oldest is not None else 0.0
             ),
-            "retry_count": int(pending["retry_count"] or 0),
+            "retry_count": int(retries["retry_count"] or 0),
             "total_attempts": int(total_attempts or 0),
             "review_alert": values["review_required"] > 0,
         }
