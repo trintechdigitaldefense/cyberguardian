@@ -247,3 +247,42 @@ def test_historical_audit_genesis_snapshot_is_empty_even_when_ledger_is_populate
         assert body["items"] == []
         assert body["has_more"] is False
 
+def test_historical_audit_collects_report_rows_during_single_verified_traversal(tmp_path, monkeypatch):
+    main, dashboard_key, _ = _load_gateway(tmp_path, monkeypatch)
+    at = datetime(2027, 12, 5, 12, tzinfo=timezone.utc).timestamp()
+    with TestClient(main.app) as client:
+        for index in range(40):
+            _seed(main, "tenant-performance", f"large-ledger-event-{index}", at + index)
+
+        original_verify = main._audit_ledger._verify_ledger_unlocked
+        visited_hashes = []
+        verified_record_counts = []
+
+        def verify_with_visit(path, on_record=None):
+            if on_record is None:
+                return original_verify(path)
+            def visit(record):
+                visited_hashes.append(record["hash"])
+                on_record(record)
+            result = original_verify(path, on_record=visit)
+            verified_record_counts.append(result["records"])
+            return result
+
+        monkeypatch.setattr(main._audit_ledger, "_verify_ledger_unlocked", verify_with_visit)
+        response = client.get(
+            "/v1/audit/history",
+            params={
+                "start": "2027-12-01T00:00:00Z",
+                "end": "2027-12-10T00:00:00Z",
+                "limit": 10,
+            },
+            headers=_auth_headers(main, dashboard_key, tenant_id="tenant-performance", request_id="single-traversal"),
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["total"] == 40
+        assert len(body["items"]) == 10
+        assert len(verified_record_counts) == 1
+        assert len(visited_hashes) == verified_record_counts[0]
+        assert len(set(visited_hashes)) == verified_record_counts[0]
+
