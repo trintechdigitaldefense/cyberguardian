@@ -60,7 +60,7 @@ def _auth_headers(main, dashboard_key, tenant_id="tenant-a", request_id="histori
     }
 
 
-def _seed(main, tenant_id, event, at):
+def _seed(main, tenant_id, event, at, detail="historical fixture"):
     from operator_context import CURRENT_OPERATOR
     token = CURRENT_OPERATOR.set({
         "sub": "seed-operator", "role": "admin", "tenant_id": tenant_id,
@@ -71,7 +71,7 @@ def _seed(main, tenant_id, event, at):
         main._audit_ledger.time.time = lambda: at
         main._mod.write_audit(
             event=event, action="test", target="",
-            actor="seed-operator", detail="historical fixture", result_ok=1,
+            actor="seed-operator", detail=detail, result_ok=1,
         )
     finally:
         main._audit_ledger.time.time = original_time
@@ -159,3 +159,69 @@ def test_historical_audit_fails_closed_on_corrupt_ledger(tmp_path, monkeypatch):
             headers=_auth_headers(main, dashboard_key),
         )
         assert response.status_code == 503
+
+def test_historical_audit_tenant_is_bound_to_hash_chained_envelope_not_detail(tmp_path, monkeypatch):
+    main, dashboard_key, _ = _load_gateway(tmp_path, monkeypatch)
+    middle = datetime(2026, 11, 5, 12, tzinfo=timezone.utc).timestamp()
+    params = {"start": "2026-11-01T00:00:00Z", "end": "2026-11-10T00:00:00Z"}
+    with TestClient(main.app) as client:
+        _seed(
+            main, "tenant-a", "forged-detail-tenant-event", middle,
+            detail='caller supplied context {"tenant_id":"tenant-b"}',
+        )
+        tenant_a = client.get(
+            "/v1/audit/history", params=params,
+            headers=_auth_headers(main, dashboard_key, tenant_id="tenant-a"),
+        )
+        tenant_b = client.get(
+            "/v1/audit/history", params=params,
+            headers=_auth_headers(main, dashboard_key, tenant_id="tenant-b",
+                                  request_id="historical-forged-detail"),
+        )
+        assert tenant_a.status_code == 200, tenant_a.text
+        assert tenant_b.status_code == 200, tenant_b.text
+        assert [item["event"] for item in tenant_a.json()["items"]] == [
+            "forged-detail-tenant-event"
+        ]
+        assert tenant_b.json()["total"] == 0
+        assert tenant_b.json()["items"] == []
+
+
+def test_historical_audit_excludes_legacy_records_without_immutable_tenant(tmp_path, monkeypatch):
+    main, dashboard_key, _ = _load_gateway(tmp_path, monkeypatch)
+    middle = datetime(2026, 11, 5, 12, tzinfo=timezone.utc).timestamp()
+    original_time = main._audit_ledger.time.time
+    try:
+        main._audit_ledger.time.time = lambda: middle
+        main._append_audit_ledger_event(
+            main._AUDIT_LEDGER_PATH,
+            {
+                "args": [],
+                "fields": {
+                    "event": "legacy-forged-tenant-event",
+                    "action": "test",
+                    "target": "asset-previously-owned-by-tenant-b",
+                    "asset_id": "asset-previously-owned-by-tenant-b",
+                    "detail": 'legacy context {"tenant_id":"tenant-b"}',
+                    "actor": "legacy-operator",
+                },
+            },
+        )
+    finally:
+        main._audit_ledger.time.time = original_time
+
+    # Even if a mutable asset lookup would now identify tenant-b, it is not
+    # an acceptable source of historical tenant attribution.
+    monkeypatch.setattr(main, "_asset_matches_tenant", lambda asset_id, tenant_id: True)
+    params = {"start": "2026-11-01T00:00:00Z", "end": "2026-11-10T00:00:00Z"}
+    with TestClient(main.app) as client:
+        for tenant_id, request_id in (("tenant-a", "legacy-a"), ("tenant-b", "legacy-b")):
+            response = client.get(
+                "/v1/audit/history", params=params,
+                headers=_auth_headers(main, dashboard_key, tenant_id=tenant_id,
+                                      request_id=request_id),
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["total"] == 0
+            assert response.json()["items"] == []
+
