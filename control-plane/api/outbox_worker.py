@@ -201,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
     ledger = Path(args.ledger).expanduser()
     if not database.is_absolute() or not ledger.is_absolute():
         parser.error("--database and --ledger must be absolute paths")
+    if not database.is_file():
+        parser.error(
+            "database file does not exist; refusing to create a separate outbox database"
+        )
 
     store = SQLiteTransactionalOutbox(database)
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
