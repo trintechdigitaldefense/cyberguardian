@@ -560,7 +560,7 @@ class SQLiteTransactionalOutbox:
                 """SELECT MIN(created_at) AS oldest_created_at,
                           COALESCE(SUM(CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END), 0)
                               AS retry_count
-                   FROM cg_outbox WHERE status IN ('pending', 'inflight')"""
+                   FROM cg_outbox WHERE status IN ('pending', 'inflight', 'review_required')"""
             ).fetchone()
             total_attempts = connection.execute(
                 "SELECT COALESCE(SUM(attempts), 0) FROM cg_outbox"
