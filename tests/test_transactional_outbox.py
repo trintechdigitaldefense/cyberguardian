@@ -303,3 +303,35 @@ def test_concurrent_workers_cannot_claim_same_or_later_event(tmp_path):
     assert all(not thread.is_alive() for thread in threads)
     assert sum(claim is not None for claim in claims) == 1
     assert len({claim["event_id"] for claim in claims if claim is not None}) == 1
+
+
+def test_reconciliation_state_is_tenant_scoped_and_emits_once(tmp_path):
+    store = make_store(tmp_path)
+    result = store.execute_operation(
+        tenant_id="tenant-a", idempotency_key="needs-reconcile",
+        request_hash="sha256:reconcile", handler=handler, now=1,
+    )
+    assert store.mark_reconciliation_required(
+        tenant_id="tenant-a", operation_id=result.operation_id,
+        reason="downstream outcome could not be confirmed", now=2,
+    )
+    assert not store.mark_reconciliation_required(
+        tenant_id="tenant-a", operation_id=result.operation_id,
+        reason="duplicate reconciliation signal", now=3,
+    )
+    assert store.operation(
+        tenant_id="tenant-a", operation_id=result.operation_id
+    )["status"] == "reconciliation_required"
+    assert store.operation(
+        tenant_id="tenant-b", operation_id=result.operation_id
+    ) is None
+    with store._connect() as connection:
+        rows = connection.execute(
+            "SELECT event_type, sequence FROM cg_outbox WHERE operation_id=? ORDER BY sequence",
+            (result.operation_id,),
+        ).fetchall()
+    assert [(row["event_type"], row["sequence"]) for row in rows] == [
+        ("operation_intent", 1),
+        ("operation_completed", 2),
+        ("operation_reconciliation_required", 3),
+    ]
