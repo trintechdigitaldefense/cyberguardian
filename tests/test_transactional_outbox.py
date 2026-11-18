@@ -160,21 +160,27 @@ def test_crash_after_delivery_before_ack_retries_same_event_id(tmp_path):
         tenant_id="tenant-a", idempotency_key="delivery-key",
         request_hash="sha256:delivery", handler=handler, now=10,
     )
-    delivered_to_sink = []
+    accepted_ids = set()
+    receiver_effects = []
+
+    def idempotent_receiver(event_id, payload):
+        if event_id not in accepted_ids:
+            accepted_ids.add(event_id)
+            receiver_effects.append(payload)
+
     first_claim = store.claim_next(worker_id="worker-1", lease_seconds=5, now=20)
     assert first_claim["event_type"] == "operation_intent"
-    delivered_to_sink.append(first_claim["event_id"])  # remote sink accepted it
-    # Simulated process death: acknowledgement is never written.
+    idempotent_receiver(first_claim["event_id"], first_claim["payload"])
+    # Simulated process death: receiver accepted the event, sender did not ack.
     assert store.claim_next(worker_id="worker-2", lease_seconds=5, now=24) is None
     retry_claim = store.claim_next(worker_id="worker-2", lease_seconds=5, now=26)
     assert retry_claim["event_id"] == first_claim["event_id"]
     assert retry_claim["attempts"] == 2
-    delivered_to_sink.append(retry_claim["event_id"])
+    idempotent_receiver(retry_claim["event_id"], retry_claim["payload"])
     store.acknowledge(
         event_id=retry_claim["event_id"], worker_id="worker-2", now=27,
     )
-    # The receiver must deduplicate this stable ID; transport is at-least-once.
-    assert delivered_to_sink == [first_claim["event_id"]] * 2
+    assert len(receiver_effects) == 1
     assert store.outbox_counts()["delivered"] == 1
 
 
@@ -224,3 +230,76 @@ def test_failed_delivery_is_retried_after_backoff(tmp_path):
     retry = store.claim_next(worker_id="other", now=12)
     assert retry["event_id"] == calls[0]
     assert retry["attempts"] == 2
+
+
+def test_expired_worker_lease_cannot_acknowledge(tmp_path):
+    store = make_store(tmp_path)
+    store.execute_operation(
+        tenant_id="tenant-a", idempotency_key="expired-lease",
+        request_hash="sha256:expired", handler=handler, now=1,
+    )
+    event = store.claim_next(worker_id="stale-worker", lease_seconds=2, now=2)
+    with pytest.raises(OutboxLeaseLost):
+        store.acknowledge(event_id=event["event_id"], worker_id="stale-worker", now=5)
+    reclaimed = store.claim_next(worker_id="new-worker", lease_seconds=5, now=5)
+    assert reclaimed["event_id"] == event["event_id"]
+    store.acknowledge(event_id=reclaimed["event_id"], worker_id="new-worker", now=6)
+
+
+def test_hard_process_exit_recovers_uncommitted_transaction(tmp_path):
+    import subprocess
+
+    store = make_store(tmp_path)
+    script = r"""
+import os
+import sys
+from transactional_outbox import SQLiteTransactionalOutbox
+store = SQLiteTransactionalOutbox(sys.argv[1])
+def die(connection, operation_id):
+    connection.execute("INSERT INTO business_state(name, value) VALUES ('killed', 1)")
+    os._exit(73)
+store.execute_operation(
+    tenant_id="tenant-a", idempotency_key="hard-crash",
+    request_hash="sha256:hard-crash", handler=die,
+)
+"""
+    env = dict(__import__("os").environ)
+    module_dir = str(Path(__file__).resolve().parents[1] / "control-plane" / "api")
+    env["PYTHONPATH"] = module_dir + __import__("os").pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(store.database_path)],
+        env=env, check=False, timeout=10,
+    )
+    assert result.returncode == 73
+    with store._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM business_state").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM cg_operations").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM cg_outbox").fetchone()[0] == 0
+
+
+def test_concurrent_workers_cannot_claim_same_or_later_event(tmp_path):
+    store = make_store(tmp_path)
+    store.execute_operation(
+        tenant_id="tenant-a", idempotency_key="worker-race",
+        request_hash="sha256:worker-race", handler=handler, now=1,
+    )
+    barrier = threading.Barrier(2)
+    claims = []
+    errors = []
+
+    def worker(worker_id):
+        try:
+            barrier.wait(timeout=5)
+            claims.append(store.claim_next(worker_id=worker_id, now=2))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"worker-{i}",)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert sum(claim is not None for claim in claims) == 1
+    assert len({claim["event_id"] for claim in claims if claim is not None}) == 1
