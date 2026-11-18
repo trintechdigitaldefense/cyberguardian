@@ -184,12 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-backoff-seconds", type=float, default=300.0)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--health-interval", type=float, default=30.0)
-    parser.add_argument("--once", action="store_true", help="Process at most one event and exit")
-    parser.add_argument("--health-once", action="store_true", help="Print queue/worker health and exit")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--once", action="store_true", help="Process at most one event and exit")
+    modes.add_argument("--health-once", action="store_true", help="Print queue/worker health and exit")
+    modes.add_argument("--review-queue", action="store_true", help="Print the read-only operator review queue")
+    parser.add_argument("--review-limit", type=int, default=100)
     args = parser.parse_args(argv)
-
-    if args.once and args.health_once:
-        parser.error("--once and --health-once cannot be combined")
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     database = Path(args.database).expanduser()
@@ -210,7 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.health_once:
-        print(json.dumps(dispatcher.health(), sort_keys=True))
+        health = dispatcher.health()
+        print(json.dumps(health, sort_keys=True))
+        return 2 if health["review_alert"] else 0
+
+    if args.review_queue:
+        print(json.dumps(store.review_queue(limit=args.review_limit), sort_keys=True))
         return 0
 
     if args.once:
