@@ -484,11 +484,110 @@ class SQLiteTransactionalOutbox:
         finally:
             connection.close()
 
+    def retry_or_review(
+        self, *, event_id: str, worker_id: str, error: str,
+        max_attempts: int, delay_seconds: float, now: float | None = None,
+    ) -> str:
+        """Release a failed lease for bounded retry or move it to operator review."""
+        if int(max_attempts) < 1:
+            raise ValueError("max_attempts must be at least one")
+        timestamp = time.time() if now is None else float(now)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT attempts FROM cg_outbox
+                   WHERE event_id=? AND status='inflight' AND lease_owner=?
+                     AND lease_until>?""",
+                (event_id, worker_id, timestamp),
+            ).fetchone()
+            if row is None:
+                raise OutboxLeaseLost("outbox event is not leased by this worker")
+            attempts = int(row["attempts"])
+            if attempts >= int(max_attempts):
+                connection.execute(
+                    """UPDATE cg_outbox SET status='review_required',
+                       lease_owner=NULL, lease_until=NULL, last_error=?
+                       WHERE event_id=?""",
+                    (str(error)[:1000], event_id),
+                )
+                result = "review_required"
+            else:
+                connection.execute(
+                    """UPDATE cg_outbox SET status='pending', next_attempt_at=?,
+                       lease_owner=NULL, lease_until=NULL, last_error=?
+                       WHERE event_id=?""",
+                    (timestamp + max(0.0, float(delay_seconds)),
+                     str(error)[:1000], event_id),
+                )
+                result = "retry_scheduled"
+            connection.commit()
+            return result
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def review_queue(self, *, limit: int = 100) -> list[dict]:
+        """Return bounded, tenant-attributed events requiring operator review."""
+        if not 1 <= int(limit) <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT event_id, operation_id, tenant_id, sequence, event_type,
+                          payload_json, attempts, last_error, created_at
+                   FROM cg_outbox WHERE status='review_required'
+                   ORDER BY created_at, operation_id, sequence LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result.append(item)
+        return result
+
+    def queue_metrics(self, *, now: float | None = None) -> dict[str, int | float | bool | None]:
+        """Expose queue depth, oldest pending age, retries and review alerts."""
+        timestamp = time.time() if now is None else float(now)
+        with self._connect() as connection:
+            counts = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM cg_outbox GROUP BY status"
+            ).fetchall()
+            pending = connection.execute(
+                """SELECT MIN(created_at) AS oldest_created_at,
+                          COALESCE(SUM(CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END), 0)
+                              AS retry_count
+                   FROM cg_outbox WHERE status IN ('pending', 'inflight')"""
+            ).fetchone()
+            total_attempts = connection.execute(
+                "SELECT COALESCE(SUM(attempts), 0) FROM cg_outbox"
+            ).fetchone()[0]
+        values = {"pending": 0, "inflight": 0, "delivered": 0, "review_required": 0}
+        values.update({row["status"]: int(row["count"]) for row in counts})
+        oldest = pending["oldest_created_at"]
+        pending_count = values["pending"] + values["inflight"]
+        return {
+            "queue_depth": pending_count,
+            "pending": values["pending"],
+            "inflight": values["inflight"],
+            "delivered": values["delivered"],
+            "review_required": values["review_required"],
+            "oldest_pending_seconds": (
+                max(0.0, timestamp - float(oldest)) if oldest is not None else 0.0
+            ),
+            "retry_count": int(pending["retry_count"] or 0),
+            "total_attempts": int(total_attempts or 0),
+            "review_alert": values["review_required"] > 0,
+        }
+
     def outbox_counts(self) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM cg_outbox GROUP BY status"
             ).fetchall()
-        counts = {"pending": 0, "inflight": 0, "delivered": 0}
+        counts = {"pending": 0, "inflight": 0, "delivered": 0, "review_required": 0}
         counts.update({row["status"]: int(row["count"]) for row in rows})
         return counts
