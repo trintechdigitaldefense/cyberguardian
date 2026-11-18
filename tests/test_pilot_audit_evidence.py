@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import asyncio
 import json
 import sys
 import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from starlette.background import BackgroundTask
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 API_DIR = Path(__file__).resolve().parents[1] / "control-plane" / "api"
 sys.path.insert(0, str(API_DIR))
@@ -221,3 +225,108 @@ def test_pilot_action_reports_unknown_outcome_if_completion_audit_fails(tmp_path
         for record in records
     )
 
+
+
+
+def _request_for_middleware(path, run_id):
+    return Request({
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"x-cg-pilot-run-id", run_id.encode("ascii"))],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    })
+
+
+def test_pilot_middleware_preserves_response_headers_and_background_task(tmp_path, monkeypatch):
+    main, _, _ = _load_gateway(tmp_path, monkeypatch)
+    completed = []
+    monkeypatch.setattr(main._mod, "write_audit", lambda **_kwargs: None)
+    original = StreamingResponse(
+        iter([b"upstream payload"]),
+        status_code=207,
+        headers={
+            "Content-Type": "application/vnd.cyberguardian+json; charset=utf-8",
+            "Cache-Control": "private, no-store",
+            "Access-Control-Allow-Origin": "https://client.example",
+            "Set-Cookie": "first=one; HttpOnly",
+        },
+        background=BackgroundTask(lambda: completed.append("done")),
+    )
+    original.raw_headers.append((b"set-cookie", b"second=two; Secure"))
+
+    async def call_next(_request):
+        return original
+
+    result = asyncio.run(
+        main._r4_pilot_audit_evidence(
+            _request_for_middleware("/health", str(uuid.uuid4())), call_next
+        )
+    )
+
+    assert result.status_code == 207
+    assert result.body == b"upstream payload"
+    assert result.headers["content-type"] == "application/vnd.cyberguardian+json; charset=utf-8"
+    assert result.headers["cache-control"] == "private, no-store"
+    assert result.headers["access-control-allow-origin"] == "https://client.example"
+    assert result.headers.getlist("set-cookie") == [
+        "first=one; HttpOnly", "second=two; Secure"
+    ]
+    assert result.headers["content-length"] == str(len(b"upstream payload"))
+    assert result.background is not None
+    asyncio.run(result.background())
+    assert completed == ["done"]
+
+
+def test_scorecard_rewrite_preserves_safe_headers_and_background_task(tmp_path, monkeypatch):
+    main, _, _ = _load_gateway(tmp_path, monkeypatch)
+    completed = []
+    run_id = str(uuid.uuid4())
+    monkeypatch.setattr(
+        main, "_pilot_audit_readiness",
+        lambda _run_id: {"ok": True, "records": 4, "events": sorted(REQUIRED_EVENTS), "detail": "verified"},
+    )
+    original = StreamingResponse(
+        iter([json.dumps({"checks": [{"id": "baseline", "ok": True}], "score": "1/1", "status": "green"}).encode("utf-8")]),
+        status_code=200,
+        media_type="application/json",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Access-Control-Allow-Origin": "https://client.example",
+            "Set-Cookie": "first=one; HttpOnly",
+            "ETag": '"stale-upstream-etag"',
+        },
+        background=BackgroundTask(lambda: completed.append("done")),
+    )
+    original.raw_headers.append((b"set-cookie", b"second=two; Secure"))
+
+    async def call_next(_request):
+        return original
+
+    result = asyncio.run(
+        main._r4_pilot_audit_evidence(
+            _request_for_middleware("/v1/pilot/scorecard", run_id), call_next
+        )
+    )
+
+    assert result.status_code == 200
+    body = json.loads(result.body)
+    assert body["audit_evidence"]["run_id"] == run_id
+    assert result.headers["content-type"].startswith("application/json")
+    assert result.headers["cache-control"] == "private, no-store"
+    assert result.headers["access-control-allow-origin"] == "https://client.example"
+    assert result.headers.getlist("set-cookie") == [
+        "first=one; HttpOnly", "second=two; Secure"
+    ]
+    assert "etag" not in result.headers
+    assert result.headers["content-length"] == str(len(result.body))
+    assert result.background is not None
+    asyncio.run(result.background())
+    assert completed == ["done"]
