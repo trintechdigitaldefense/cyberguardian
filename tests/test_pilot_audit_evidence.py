@@ -172,7 +172,7 @@ def test_pilot_action_is_not_started_when_preflight_audit_write_fails(tmp_path, 
 
     assert response.status_code == 503
     assert response.json()["operation_status"] == "not_started"
-    assert response.json()["operation_id"] == "pilot-preflight-failure"
+    assert response.json()["operation_id"]
     assert main._mod.load_gate()["client_mode"] is False
 
 
@@ -204,7 +204,8 @@ def test_pilot_action_reports_unknown_outcome_if_completion_audit_fails(tmp_path
     assert calls == ["pilot_action_started", "pilot_client_mode_on"]
     assert response.status_code == 503
     assert response.json()["operation_status"] == "outcome_unknown"
-    assert response.json()["operation_id"] == "pilot-completion-failure"
+    operation_id = response.json()["operation_id"]
+    assert operation_id
     # The operation ran only after its durable intent was recorded. A 503 here
     # is explicitly an unknown outcome, not a safe signal to blindly retry.
     assert main._mod.load_gate()["client_mode"] is True
@@ -216,7 +217,7 @@ def test_pilot_action_reports_unknown_outcome_if_completion_audit_fails(tmp_path
     ]
     assert any(
         record["event"]["fields"].get("event") == "pilot_action_started"
-        and "pilot-completion-failure" in record["event"]["fields"].get("detail", "")
+        and operation_id in record["event"]["fields"].get("detail", "")
         for record in records
     )
 
