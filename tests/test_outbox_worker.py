@@ -118,7 +118,7 @@ def test_worker_uses_bounded_exponential_backoff_then_review_queue(tmp_path):
     assert review[0]["event_id"] == calls[0]
     assert review[0]["tenant_id"] == "tenant-a"
     assert review[0]["attempts"] == 2
-    assert "ledger temporarily unavailable" in review[0]["last_error"]
+    assert review[0]["last_error"] == "OSError: audit sink delivery failed"
     metrics = store.queue_metrics(now=clock())
     assert metrics["review_required"] == 1
     assert metrics["retry_count"] == 1
