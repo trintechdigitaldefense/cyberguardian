@@ -91,6 +91,65 @@ class SQLiteTransactionalOutbox:
                 CREATE INDEX IF NOT EXISTS idx_cg_outbox_operation_order
                     ON cg_outbox(operation_id, sequence, status);
             """)
+            self._migrate_outbox_review_status(connection)
+
+    @staticmethod
+    def _migrate_outbox_review_status(connection: sqlite3.Connection) -> None:
+        """Add a durable operator-review state without discarding existing rows."""
+        schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='cg_outbox'"
+        ).fetchone()
+        if schema is None or "review_required" in str(schema["sql"]):
+            return
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DROP INDEX IF EXISTS idx_cg_outbox_ready")
+            connection.execute("DROP INDEX IF EXISTS idx_cg_outbox_operation_order")
+            connection.execute("ALTER TABLE cg_outbox RENAME TO cg_outbox_legacy")
+            connection.execute("""
+                CREATE TABLE cg_outbox (
+                    event_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL REFERENCES cg_operations(operation_id),
+                    tenant_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'inflight', 'delivered', 'review_required')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at REAL NOT NULL,
+                    lease_owner TEXT,
+                    lease_until REAL,
+                    last_error TEXT,
+                    created_at REAL NOT NULL,
+                    delivered_at REAL,
+                    UNIQUE(operation_id, sequence)
+                )
+            """)
+            connection.execute("""
+                INSERT INTO cg_outbox
+                (event_id, operation_id, tenant_id, sequence, event_type, payload_json,
+                 status, attempts, next_attempt_at, lease_owner, lease_until,
+                 last_error, created_at, delivered_at)
+                SELECT event_id, operation_id, tenant_id, sequence, event_type, payload_json,
+                       status, attempts, next_attempt_at, lease_owner, lease_until,
+                       last_error, created_at, delivered_at
+                FROM cg_outbox_legacy
+            """)
+            connection.execute("DROP TABLE cg_outbox_legacy")
+            connection.execute("""
+                CREATE INDEX idx_cg_outbox_ready
+                ON cg_outbox(status, next_attempt_at, created_at)
+            """)
+            connection.execute("""
+                CREATE INDEX idx_cg_outbox_operation_order
+                ON cg_outbox(operation_id, sequence, status)
+            """)
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
 
     @staticmethod
     def _json(value: Any) -> str:
