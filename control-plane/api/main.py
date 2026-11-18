@@ -115,51 +115,54 @@ async def historical_audit(
     ledger_path = Path(_AUDIT_LEDGER_PATH)
     matching_items = []
     matching_count = 0
+    requested_head = str(snapshot_head or "")
+    found_head = requested_head == _audit_ledger.GENESIS
+
+    def collect_verified_record(record):
+        nonlocal matching_count, found_head
+        if found_head:
+            return
+        envelope = record.get("event")
+        fields = envelope.get("fields") if isinstance(envelope, dict) else None
+        if isinstance(fields, dict):
+            recorded_at = float(record["recorded_at"])
+            event_at = datetime.fromtimestamp(recorded_at, timezone.utc)
+            if start_at <= event_at < end_at:
+                scoped_tenant = _historical_audit_tenant(envelope, tenant_id)
+                if scoped_tenant == tenant_id:
+                    matching_count += 1
+                    if offset <= matching_count - 1 < offset + limit:
+                        matching_items.append({
+                            "source_record_id": str(record.get("event_id") or ""),
+                            "timestamp": event_at.isoformat().replace("+00:00", "Z"),
+                            "event": str(fields.get("event") or "recorded_activity"),
+                            "action": str(fields.get("action") or ""),
+                            "actor": str(fields.get("actor") or ""),
+                            "target": str(fields.get("target") or ""),
+                            "detail": str(fields.get("detail") or ""),
+                            "asset_id": str(fields.get("asset_id") or ""),
+                            "tenant_id": scoped_tenant,
+                            "record_hash": str(record.get("hash") or ""),
+                        })
+        if requested_head and record.get("hash") == requested_head:
+            found_head = True
+
     try:
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
         lock_fd = _audit_ledger._open_lock(
             ledger_path.with_name(ledger_path.name + ".lock"), fcntl.LOCK_SH
         )
         try:
-            integrity = _audit_ledger._verify_ledger_unlocked(ledger_path)
+            # Verify and collect report rows in one locked traversal. Callback
+            # output is used only if the verifier validates the entire chain.
+            integrity = _audit_ledger._verify_ledger_unlocked(
+                ledger_path, on_record=collect_verified_record
+            )
             if not integrity.get("valid"):
                 return JSONResponse({"detail": "audit history integrity verification failed"}, status_code=503)
-            pinned_head = str(snapshot_head or integrity.get("head") or _audit_ledger.GENESIS)
-            found_head = pinned_head == _audit_ledger.GENESIS
-            # GENESIS represents the empty ledger snapshot. A valid populated
-            # ledger may exist now, but none of its later records belong to
-            # that pinned snapshot, so do not scan or include them.
-            if pinned_head != _audit_ledger.GENESIS and ledger_path.exists():
-                with ledger_path.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        if not line.endswith("\n"):
-                            return JSONResponse({"detail": "audit history contains a truncated record"}, status_code=503)
-                        record = json.loads(line)
-                        envelope = record.get("event")
-                        fields = envelope.get("fields") if isinstance(envelope, dict) else None
-                        if isinstance(fields, dict):
-                            recorded_at = float(record["recorded_at"])
-                            event_at = datetime.fromtimestamp(recorded_at, timezone.utc)
-                            if start_at <= event_at < end_at:
-                                scoped_tenant = _historical_audit_tenant(envelope, tenant_id)
-                                if scoped_tenant == tenant_id:
-                                    matching_count += 1
-                                    if offset <= matching_count - 1 < offset + limit:
-                                        matching_items.append({
-                                            "source_record_id": str(record.get("event_id") or ""),
-                                            "timestamp": event_at.isoformat().replace("+00:00", "Z"),
-                                            "event": str(fields.get("event") or "recorded_activity"),
-                                            "action": str(fields.get("action") or ""),
-                                            "actor": str(fields.get("actor") or ""),
-                                            "target": str(fields.get("target") or ""),
-                                            "detail": str(fields.get("detail") or ""),
-                                            "asset_id": str(fields.get("asset_id") or ""),
-                                            "tenant_id": scoped_tenant,
-                                            "record_hash": str(record.get("hash") or ""),
-                                        })
-                        if record.get("hash") == pinned_head:
-                            found_head = True
-                            break
+            pinned_head = requested_head or str(integrity.get("head") or _audit_ledger.GENESIS)
+            if not requested_head:
+                found_head = True
             if not found_head:
                 return JSONResponse({"detail": "historical audit snapshot is no longer available"}, status_code=409)
         finally:
