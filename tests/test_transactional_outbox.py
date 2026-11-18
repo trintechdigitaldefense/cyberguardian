@@ -1,7 +1,6 @@
 """Failure, replay, concurrency and recovery tests for the R4 outbox."""
 from __future__ import annotations
 
-import hashlib
 import sys
 import threading
 from pathlib import Path
@@ -44,12 +43,12 @@ def test_business_state_operation_and_outbox_commit_together(tmp_path):
     assert store.outbox_counts() == {"pending": 2, "inflight": 0, "delivered": 0}
     with store._connect() as connection:
         assert connection.execute("SELECT value FROM business_state WHERE name='changed'").fetchone()[0] == 1
-        assert connection.execute(
+        events = connection.execute(
             "SELECT event_type FROM cg_outbox WHERE operation_id=? ORDER BY sequence",
             (result.operation_id,),
-        ).fetchall() == [
-            connection.execute("SELECT event_type FROM cg_outbox WHERE operation_id=? AND sequence=1", (result.operation_id,)).fetchone(),
-            connection.execute("SELECT event_type FROM cg_outbox WHERE operation_id=? AND sequence=2", (result.operation_id,)).fetchone(),
+        ).fetchall()
+        assert [row["event_type"] for row in events] == [
+            "operation_intent", "operation_completed"
         ]
 
 
