@@ -18,7 +18,7 @@ The outbox tables live in the same `DB_PATH` database as `agent_commands`. The n
 
 - A crash before commit leaves neither the command-state transition nor its outbox intent/completion records committed.
 - A crash after commit leaves the command-state transition and durable outbox records available for recovery and later audit delivery.
-- Tenant identity is required from the gateway's authenticated agent request context; missing tenant context fails closed rather than falling back to a shared default. It is copied into both operation and outbox rows.
+- Tenant identity is derived from the registered asset row in the application database; an unregistered asset or missing tenant attribution fails closed. The asset-to-tenant mapping is rechecked inside the same write transaction before any command status transition. The resolved tenant is copied into both operation and outbox rows.
 - Each command audit record retains the prior per-command forensic fields: event type, command ID, pending-action ID, action, target, asset ID, actor and detail; delivered records also retain decision and detection IDs, while expired records retain the failed result status.
 - The per-command records are durably nested in the `operation_completed` event's `result.audit_events` array and are committed atomically with the command status transitions.
 - The existing asset-bound agent credential checks, tenant checks, single-use compare-and-set command transition, command expiry handling and command-signing middleware remain in place.
