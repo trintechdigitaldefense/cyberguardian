@@ -35,3 +35,7 @@ body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; 
 #toast.visible { display:block; }
 #conn-badge.status-online { background:#14532d; color:#86efac; }
 #conn-badge.status-offline { background:#7f1d1d; color:#fecaca; }
+
+#client-reporting { border-color:#25637a; }
+#client-reporting button:disabled { opacity:.6; cursor:wait; }
+#client-report-status { min-width:12rem; }

@@ -54,7 +54,13 @@ def _hash_record(record: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical(payload)).hexdigest()
 
 
-def _verify_ledger_unlocked(path: Path) -> dict[str, Any]:
+def _verify_ledger_unlocked(path: Path, on_record=None) -> dict[str, Any]:
+    """Verify the chain and optionally visit each verified record once.
+
+    The callback runs only after the record's link and digest are checked.
+    Callers must not expose callback-collected data unless verification succeeds.
+    The caller is responsible for holding the ledger lock.
+    """
     path = Path(path)
     _reject_symlink(path, "audit ledger")
     if not path.exists():
@@ -80,6 +86,8 @@ def _verify_ledger_unlocked(path: Path) -> dict[str, Any]:
                         "error": f"record hash mismatch at line {line_number}"}
             previous = actual
             count += 1
+            if on_record is not None:
+                on_record(record)
     return {"valid": True, "records": count, "head": previous}
 
 

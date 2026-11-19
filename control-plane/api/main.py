@@ -5,6 +5,9 @@ import importlib.util
 import hashlib
 import hmac
 import json
+import fcntl
+from datetime import datetime, timezone
+import audit_ledger as _audit_ledger
 import logging
 import os
 import re
@@ -53,7 +56,136 @@ _mod = importlib.util.module_from_spec(_spec)
 sys.modules["cg_api_main"] = _mod
 _spec.loader.exec_module(_mod)
 import issue_memory as _issue_memory
+
 app = _mod.app
+
+
+def _parse_audit_window(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("report window timestamps must be ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("report window timestamps must include an explicit timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _historical_audit_tenant(envelope: dict, tenant_id: str) -> str | None:
+    """Return only the tenant bound to the hash-chained event envelope.
+
+    Audit detail, asset ownership and pending-action state are mutable or
+    caller-controlled context. They must never be used to reconstruct the
+    tenant boundary for historical records. Legacy events without an
+    envelope-level tenant_id are intentionally excluded from client reports.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    event_tenant = envelope.get("tenant_id")
+    if not isinstance(event_tenant, str) or not event_tenant:
+        return None
+    return event_tenant if event_tenant == tenant_id else None
+
+
+@app.get("/v1/audit/history")
+async def historical_audit(
+    request: Request,
+    start: str,
+    end: str,
+    tenant_id: str = "",
+    limit: int = 500,
+    offset: int = 0,
+    snapshot_head: str = "",
+):
+    """Read a verified, tenant-scoped, stable page of historical audit events."""
+    tenant_id = str(tenant_id or getattr(request.state, "tenant_id", "") or "").strip()
+    if not tenant_id:
+        return JSONResponse({"detail": "verified tenant context is required"}, status_code=403)
+    try:
+        start_at = _parse_audit_window(start)
+        end_at = _parse_audit_window(end)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    if end_at <= start_at:
+        return JSONResponse({"detail": "report end must be later than report start"}, status_code=422)
+    if (end_at - start_at).total_seconds() > 3660 * 86400:
+        return JSONResponse({"detail": "historical report window exceeds the 10-year maximum"}, status_code=422)
+    if not 1 <= limit <= 500 or not 0 <= offset <= 50000:
+        return JSONResponse({"detail": "invalid historical audit pagination"}, status_code=422)
+
+    ledger_path = Path(_AUDIT_LEDGER_PATH)
+    matching_items = []
+    matching_count = 0
+    requested_head = str(snapshot_head or "")
+    found_head = requested_head == _audit_ledger.GENESIS
+
+    def collect_verified_record(record):
+        nonlocal matching_count, found_head
+        if found_head:
+            return
+        envelope = record.get("event")
+        fields = envelope.get("fields") if isinstance(envelope, dict) else None
+        if isinstance(fields, dict):
+            recorded_at = float(record["recorded_at"])
+            event_at = datetime.fromtimestamp(recorded_at, timezone.utc)
+            if start_at <= event_at < end_at:
+                scoped_tenant = _historical_audit_tenant(envelope, tenant_id)
+                if scoped_tenant == tenant_id:
+                    matching_count += 1
+                    if offset <= matching_count - 1 < offset + limit:
+                        matching_items.append({
+                            "source_record_id": str(record.get("event_id") or ""),
+                            "timestamp": event_at.isoformat().replace("+00:00", "Z"),
+                            "event": str(fields.get("event") or "recorded_activity"),
+                            "action": str(fields.get("action") or ""),
+                            "actor": str(fields.get("actor") or ""),
+                            "target": str(fields.get("target") or ""),
+                            "detail": str(fields.get("detail") or ""),
+                            "asset_id": str(fields.get("asset_id") or ""),
+                            "tenant_id": scoped_tenant,
+                            "record_hash": str(record.get("hash") or ""),
+                        })
+        if requested_head and record.get("hash") == requested_head:
+            found_head = True
+
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = _audit_ledger._open_lock(
+            ledger_path.with_name(ledger_path.name + ".lock"), fcntl.LOCK_SH
+        )
+        try:
+            # Verify and collect report rows in one locked traversal. Callback
+            # output is used only if the verifier validates the entire chain.
+            integrity = _audit_ledger._verify_ledger_unlocked(
+                ledger_path, on_record=collect_verified_record
+            )
+            if not integrity.get("valid"):
+                return JSONResponse({"detail": "audit history integrity verification failed"}, status_code=503)
+            pinned_head = requested_head or str(integrity.get("head") or _audit_ledger.GENESIS)
+            if not requested_head:
+                found_head = True
+            if not found_head:
+                return JSONResponse({"detail": "historical audit snapshot is no longer available"}, status_code=409)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, json.JSONDecodeError):
+        _logger.exception("historical audit read failed")
+        return JSONResponse({"detail": "historical audit source is unavailable or invalid"}, status_code=503)
+
+    return {
+        "tenant_id": tenant_id,
+        "start": start_at.isoformat().replace("+00:00", "Z"),
+        "end": end_at.isoformat().replace("+00:00", "Z"),
+        "boundary": "[start, end)",
+        "timezone": "UTC",
+        "snapshot_head": pinned_head,
+        "total": matching_count,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < matching_count,
+        "items": matching_items,
+    }
+
 
 
 @app.on_event("startup")
@@ -160,10 +292,12 @@ def _write_audit_with_operator(*args, **kwargs):
     # Commit the independent append-only evidence first. If its chain is
     # corrupt or storage is unavailable, do not report an audit write as
     # successful; the original SQLite audit remains a queryable index.
-    _append_audit_ledger_event(
-        _AUDIT_LEDGER_PATH,
-        {"args": list(args), "fields": kwargs},
-    )
+    ledger_event = {"args": list(args), "fields": kwargs}
+    if claims:
+        # Bind tenant identity outside caller-controlled fields and detail.
+        # The envelope is covered by the append-only ledger hash chain.
+        ledger_event["tenant_id"] = str(claims["tenant_id"])
+    _append_audit_ledger_event(_AUDIT_LEDGER_PATH, ledger_event)
     return _original_write_audit(*args, **kwargs)
 
 
@@ -293,6 +427,7 @@ async def _filter_dashboard_tenant_response(response, tenant_id: str, path: str)
         "/v1/fleet": "items",
         "/v1/gate": "pending",
         "/v1/audit": "items",
+        "/v1/audit/history": "items",
         "/v1/feedback": "items",
         "/v1/issues/client-view": "items",
     }.get(path)
@@ -814,3 +949,238 @@ async def _agent_scope_and_command_signing(request: Request, call_next):
         return JSONResponse({"detail": f"command signing failed: {exc}"}, status_code=500)
 
     return JSONResponse(result, status_code=response.status_code)
+
+# R4 owner-pilot audit evidence. These events are appended to the independent,
+# fsync-backed hash-chain ledger; the scorecard requires all four events from
+# the same pilot run before it can report audit readiness.
+_PILOT_AUDIT_EVENTS = {
+    ("GET", "/health"): "pilot_health_check",
+    ("POST", "/v1/client-mode"): "pilot_client_mode_on",
+    ("POST", "/v1/issues/remember"): "pilot_issue_created",
+}
+_PILOT_REQUIRED_AUDIT_EVENTS = {
+    "pilot_health_check",
+    "pilot_client_mode_on",
+    "pilot_issue_created",
+    "pilot_remediation_blocked",
+}
+
+
+def _pilot_audit_readiness(run_id: str) -> dict:
+    run_id = str(run_id or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", run_id):
+        return {"ok": False, "records": 0, "events": [], "detail": "pilot run ID is missing or invalid"}
+    ledger_path = Path(_AUDIT_LEDGER_PATH)
+    lock_fd = None
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = _audit_ledger._open_lock(
+            ledger_path.with_name(ledger_path.name + ".lock"), fcntl.LOCK_SH
+        )
+        integrity = _audit_ledger._verify_ledger_unlocked(ledger_path)
+        if not integrity.get("valid"):
+            return {
+                "ok": False, "records": int(integrity.get("records") or 0),
+                "events": [], "detail": "audit ledger integrity verification failed",
+            }
+        if int(integrity.get("records") or 0) <= 0 or not ledger_path.is_file():
+            return {"ok": False, "records": 0, "events": [], "detail": "audit ledger is empty"}
+        observed = set()
+        with ledger_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                record = json.loads(line)
+                envelope = record.get("event")
+                fields = envelope.get("fields") if isinstance(envelope, dict) else None
+                if not isinstance(fields, dict):
+                    continue
+                detail = str(fields.get("detail") or "")
+                if run_id in detail:
+                    event_name = str(fields.get("event") or "")
+                    if event_name in _PILOT_REQUIRED_AUDIT_EVENTS:
+                        observed.add(event_name)
+        missing = sorted(_PILOT_REQUIRED_AUDIT_EVENTS - observed)
+        return {
+            "ok": not missing,
+            "records": int(integrity["records"]),
+            "events": sorted(observed),
+            "detail": (
+                f"{len(observed)}/4 required pilot events verified; "
+                f"{integrity['records']} hash-chain records"
+                if not missing else
+                f"missing required pilot audit events: {', '.join(missing)}"
+            ),
+        }
+    except Exception:
+        _logger.exception("pilot audit readiness check failed")
+        return {"ok": False, "records": 0, "events": [], "detail": "audit ledger is unreadable or unavailable"}
+    finally:
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+
+def _response_with_preserved_headers(original: Response, content: bytes, *, body_changed: bool = False) -> Response:
+    """Rebuild a consumed response without discarding end-to-end metadata.
+
+    Preserve repeated headers (notably Set-Cookie), content type, CORS/cache
+    controls and the original background task. Recompute Content-Length because
+    the body may have changed; discard validators/range metadata only when it
+    has changed. Hop-by-hop transport headers are never forwarded.
+    """
+    hop_by_hop = {
+        b"content-length", b"transfer-encoding", b"connection", b"keep-alive",
+        b"proxy-authenticate", b"proxy-authorization", b"te", b"trailer", b"upgrade",
+    }
+    changed_body_headers = {b"etag", b"content-md5", b"digest", b"content-range", b"last-modified"}
+    copied_headers = [
+        (key, value)
+        for key, value in original.raw_headers
+        if key.lower() not in hop_by_hop
+        and not (body_changed and key.lower() in changed_body_headers)
+    ]
+    replacement = Response(
+        content=content,
+        status_code=original.status_code,
+        background=getattr(original, "background", None),
+    )
+    replacement.raw_headers = copied_headers
+    replacement.raw_headers.append((b"content-length", str(len(content)).encode("ascii")))
+    return replacement
+
+
+@app.middleware("http")
+async def _r4_pilot_audit_evidence(request: Request, call_next):
+    method = request.method.upper()
+    path = request.url.path
+    run_id = str(request.headers.get("X-CG-Pilot-Run-ID") or "").strip()
+    monitored = (method, path) in _PILOT_AUDIT_EVENTS or (
+        method == "POST" and path == "/v1/issues/auto-remediate"
+    )
+    is_scorecard = method == "GET" and path == "/v1/pilot/scorecard"
+    if not monitored and not is_scorecard:
+        return await call_next(request)
+
+    if monitored:
+        tenant_id = str(
+            request.headers.get("X-Tenant-ID")
+            or getattr(request.state, "tenant_id", "")
+            or os.environ.get("CG_TENANT_ID", "default")
+        )
+        request_id = str(request.headers.get("X-Request-ID") or "").strip()
+        operation_id = os.urandom(16).hex()
+        intent = {
+            "pilot_run_id": run_id,
+            "tenant_id": tenant_id,
+            "operation_id": operation_id,
+            "request_id": request_id,
+            "phase": "started",
+            "http_method": method,
+            "path": path,
+        }
+        # Persist a durable intent before invoking the endpoint. If this write
+        # fails, call_next is never reached and the business operation cannot
+        # mutate state without an audit record proving the attempt.
+        try:
+            _mod.write_audit(
+                event="pilot_action_started",
+                action=method,
+                target=path,
+                actor="r4-owner-pilot",
+                detail=json.dumps(intent, sort_keys=True, separators=(",", ":")),
+                result_ok=0,
+            )
+        except Exception:
+            _logger.exception("R4 pilot action preflight audit write failed")
+            return JSONResponse(
+                {
+                    "detail": "pilot action was not started because its audit intent could not be persisted",
+                    "operation_id": operation_id,
+                    "operation_status": "not_started",
+                },
+                status_code=503,
+            )
+
+    response = await call_next(request)
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    raw_body = b"".join(chunks)
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        payload = {}
+
+    if monitored:
+        event_name = _PILOT_AUDIT_EVENTS.get((method, path), "pilot_remediation_attempt")
+        if method == "POST" and path == "/v1/client-mode":
+            if not isinstance(payload, dict) or payload.get("client_mode") is not True:
+                event_name = "pilot_client_mode_not_enabled"
+        elif method == "POST" and path == "/v1/issues/remember":
+            if response.status_code < 200 or response.status_code >= 300 or not isinstance(payload, dict) or payload.get("status") != "ok":
+                event_name = "pilot_issue_creation_failed"
+        elif method == "POST" and path == "/v1/issues/auto-remediate":
+            event_name = (
+                "pilot_remediation_blocked"
+                if isinstance(payload, dict) and payload.get("status") == "blocked"
+                else "pilot_remediation_not_blocked"
+            )
+        evidence = {
+            "pilot_run_id": run_id,
+            "tenant_id": tenant_id,
+            "operation_id": operation_id,
+            "request_id": request_id,
+            "phase": "completed",
+            "http_status": int(response.status_code),
+            "result_status": str(payload.get("status") or "") if isinstance(payload, dict) else "",
+        }
+        try:
+            _mod.write_audit(
+                event=event_name,
+                action=method,
+                target=path,
+                actor="r4-owner-pilot",
+                detail=json.dumps(evidence, sort_keys=True, separators=(",", ":")),
+                result_ok=1 if 200 <= response.status_code < 300 else 0,
+            )
+        except Exception:
+            _logger.exception("R4 pilot action completion audit write failed")
+            return JSONResponse(
+                {
+                    "detail": "pilot action outcome could not be fully audited; reconcile state before retrying",
+                    "operation_id": operation_id,
+                    "operation_status": "outcome_unknown",
+                },
+                status_code=503,
+            )
+
+    if is_scorecard and isinstance(payload, dict):
+        audit = _pilot_audit_readiness(run_id)
+        checks = payload.get("checks")
+        if not isinstance(checks, list):
+            checks = []
+        replacement = {
+            "id": "audit_ready",
+            "label": "Audit trail writing",
+            "ok": bool(audit["ok"]),
+            "detail": audit["detail"],
+        }
+        found = False
+        for index, check in enumerate(checks):
+            if isinstance(check, dict) and check.get("id") == "audit_ready":
+                checks[index] = replacement
+                found = True
+                break
+        if not found:
+            checks.append(replacement)
+        payload["checks"] = checks
+        passed = sum(1 for check in checks if isinstance(check, dict) and check.get("ok") is True)
+        payload["score"] = f"{passed}/{len(checks)}"
+        payload["status"] = "green" if checks and passed == len(checks) else "red"
+        payload["audit_evidence"] = {
+            "run_id": run_id,
+            "records": audit["records"],
+            "verified_events": audit["events"],
+        }
+        scorecard_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return _response_with_preserved_headers(response, scorecard_body, body_changed=True)
+    return _response_with_preserved_headers(response, raw_body)

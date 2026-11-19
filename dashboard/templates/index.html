@@ -68,6 +68,23 @@
     <div class="row"><button type="button" class="ghost" data-action="load-fleet">Refresh Fleet</button></div>
     <div id="fleet-table"><p class="hint">No agents registered yet.</p></div>
   </section>
+
+  <section id="client-reporting">
+    <h2>Client PDF Reporting Centre</h2>
+    <p class="hint">Create a client-friendly PDF with a current monitoring snapshot and historical activity from the selected period. Technical terms are explained in everyday language.</p>
+    <div class="row">
+      <label for="report-start">Start (inclusive)</label>
+      <input id="report-start" type="datetime-local" required>
+      <label for="report-end">End (exclusive)</label>
+      <input id="report-end" type="datetime-local" required>
+    </div>
+    <p class="hint">Times use this device's local timezone and are converted to UTC. Historical activity uses the exact interval [start, end); other monitoring figures are a snapshot at generation time.</p>
+    <div class="row">
+      <button type="button" class="ok" data-action="download-client-report">Generate &amp; download client PDF</button>
+      <span id="client-report-status" class="meta" role="status">Choose a reporting period. All required sources must be available.</span>
+    </div>
+    <p class="hint">The report is generated on demand. If the audit history fails integrity checks, a source is unavailable, or the client identity cannot be confirmed, generation stops rather than producing an incomplete or cross-client report.</p>
+  </section>
   <section>
     <h2>Weekly Digest</h2>
     <p class="hint">Plain-language 7-day summary for operators.</p>
