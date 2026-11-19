@@ -20,7 +20,8 @@ def _cg_live_outbox():
 @app.get("/v1/agent/commands")
 async def agent_commands(asset_id: str, x_api_key: str = Depends(require_api_key)):
     """Atomically mark queued commands delivered and persist their audit outbox events."""
-    import hashlib\n    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
+    import hashlib
+    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
     if not ok_key:
         raise HTTPException(403, f"Agent commands rejected: {key_why}")
 
