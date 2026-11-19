@@ -1,8 +1,10 @@
 """Supervised outbox worker retry, migration, metrics and review-queue tests."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -10,7 +12,7 @@ import pytest
 API_DIR = Path(__file__).resolve().parents[1] / "control-plane" / "api"
 sys.path.insert(0, str(API_DIR))
 
-from outbox_worker import OutboxDispatcher  # noqa: E402
+from outbox_worker import OutboxDispatcher, main as worker_main  # noqa: E402
 from transactional_outbox import SQLiteTransactionalOutbox  # noqa: E402
 
 
@@ -37,7 +39,7 @@ def make_store(tmp_path):
     return store, result
 
 
-def test_schema_migration_preserves_legacy_pending_rows(tmp_path):
+def test_schema_migration_preserves_legacy_rows_and_metadata(tmp_path):
     path = tmp_path / "legacy.sqlite3"
     connection = sqlite3.connect(path)
     connection.executescript("""
@@ -65,8 +67,15 @@ def test_schema_migration_preserves_legacy_pending_rows(tmp_path):
         INSERT INTO cg_operations VALUES
             ('op-legacy', 'tenant-a', 'legacy-key', 'hash', 'completed', '{}', 1, 1);
         INSERT INTO cg_outbox VALUES
-            ('event-legacy', 'op-legacy', 'tenant-a', 1, 'operation_intent',
-             '{"tenant_id":"tenant-a"}', 'pending', 2, 1, NULL, NULL, NULL, 1, NULL);
+            ('event-pending', 'op-legacy', 'tenant-a', 1, 'operation_intent',
+             '{"tenant_id":"tenant-a","legacy":true}', 'pending', 2, 11,
+             NULL, NULL, 'temporary failure', 1, NULL),
+            ('event-inflight', 'op-legacy', 'tenant-a', 2, 'operation_progress',
+             '{"tenant_id":"tenant-a","lease":true}', 'inflight', 5, 12,
+             'worker-old', 30, 'lease retained', 2, NULL),
+            ('event-delivered', 'op-legacy', 'tenant-a', 3, 'operation_completed',
+             '{"tenant_id":"tenant-a","done":true}', 'delivered', 1, 13,
+             NULL, NULL, NULL, 3, 14);
     """)
     connection.commit()
     connection.close()
@@ -76,15 +85,47 @@ def test_schema_migration_preserves_legacy_pending_rows(tmp_path):
         schema = migrated.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='cg_outbox'"
         ).fetchone()["sql"]
-        row = migrated.execute(
-            "SELECT event_id, tenant_id, status, attempts FROM cg_outbox"
-        ).fetchone()
+        rows = migrated.execute(
+            """SELECT event_id, tenant_id, sequence, status, attempts,
+                      next_attempt_at, lease_owner, lease_until, last_error,
+                      created_at, delivered_at
+               FROM cg_outbox ORDER BY sequence"""
+        ).fetchall()
+        indexes = {
+            row["name"] for row in migrated.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='cg_outbox'"
+            )
+        }
+        foreign_keys = migrated.execute("PRAGMA foreign_key_list(cg_outbox)").fetchall()
+        integrity = migrated.execute("PRAGMA integrity_check").fetchone()[0]
+
     assert "review_required" in schema
-    assert dict(row) == {
-        "event_id": "event-legacy", "tenant_id": "tenant-a",
-        "status": "pending", "attempts": 2,
+    assert [dict(row) for row in rows] == [
+        {
+            "event_id": "event-pending", "tenant_id": "tenant-a", "sequence": 1,
+            "status": "pending", "attempts": 2, "next_attempt_at": 11.0,
+            "lease_owner": None, "lease_until": None,
+            "last_error": "temporary failure", "created_at": 1.0, "delivered_at": None,
+        },
+        {
+            "event_id": "event-inflight", "tenant_id": "tenant-a", "sequence": 2,
+            "status": "inflight", "attempts": 5, "next_attempt_at": 12.0,
+            "lease_owner": "worker-old", "lease_until": 30.0,
+            "last_error": "lease retained", "created_at": 2.0, "delivered_at": None,
+        },
+        {
+            "event_id": "event-delivered", "tenant_id": "tenant-a", "sequence": 3,
+            "status": "delivered", "attempts": 1, "next_attempt_at": 13.0,
+            "lease_owner": None, "lease_until": None, "last_error": None,
+            "created_at": 3.0, "delivered_at": 14.0,
+        },
+    ]
+    assert {"idx_cg_outbox_ready", "idx_cg_outbox_operation_order"} <= indexes
+    assert any(row["table"] == "cg_operations" for row in foreign_keys)
+    assert integrity == "ok"
+    assert store.outbox_counts() == {
+        "pending": 1, "inflight": 1, "delivered": 1, "review_required": 0,
     }
-    assert store.outbox_counts()["pending"] == 1
 
 
 def test_worker_uses_bounded_exponential_backoff_then_review_queue(tmp_path):
@@ -303,3 +344,43 @@ def test_read_only_inspection_does_not_initialize_or_mutate_schema(tmp_path):
     after.close()
     assert after_version == before_version
     assert inspector.read_only is True
+
+
+def test_health_once_cli_fails_closed_and_stays_read_only(tmp_path, capsys):
+    from outbox_worker import _write_heartbeat
+
+    database = tmp_path / "health.sqlite3"
+    store = SQLiteTransactionalOutbox(database)
+    heartbeat = tmp_path / "worker.heartbeat"
+    arguments = [
+        "--database", str(database),
+        "--ledger", str(tmp_path / "audit.jsonl"),
+        "--heartbeat-file", str(heartbeat),
+        "--health-stale-seconds", "90",
+        "--health-once",
+    ]
+
+    before = sqlite3.connect(database)
+    before_version = before.execute("PRAGMA schema_version").fetchone()[0]
+    before.close()
+
+    _write_heartbeat(
+        heartbeat, {"worker_id": "worker-a", "status": "healthy"}, now=time.time()
+    )
+    assert worker_main(arguments) == 0
+    healthy_output = json.loads(capsys.readouterr().out)
+    assert healthy_output["heartbeat_unhealthy"] is False
+    assert healthy_output["status"] == "healthy"
+
+    _write_heartbeat(
+        heartbeat, {"worker_id": "worker-a", "status": "degraded"}, now=time.time()
+    )
+    assert worker_main(arguments) == 2
+    degraded_output = json.loads(capsys.readouterr().out)
+    assert degraded_output["heartbeat_unhealthy"] is True
+
+    after = sqlite3.connect(database)
+    after_version = after.execute("PRAGMA schema_version").fetchone()[0]
+    after.close()
+    assert after_version == before_version
+    assert store.read_only is False
