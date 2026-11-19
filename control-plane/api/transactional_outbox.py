@@ -199,6 +199,7 @@ class SQLiteTransactionalOutbox:
         timestamp = time.time() if now is None else float(now)
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
         try:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
