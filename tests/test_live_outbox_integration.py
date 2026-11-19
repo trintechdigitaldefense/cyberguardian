@@ -139,6 +139,21 @@ def test_live_operation_rejects_connection_with_existing_transaction(tmp_path):
 
 
 
+
+def test_patched_gateway_route_source_compiles():
+    """Generated route must be valid Python before it is assembled into the gateway."""
+    from gateway_patches.agent_commands_audit import patch_source
+
+    original = (
+        '@app.get("/v1/agent/commands")\\n'
+        'async def agent_commands(asset_id: str):\\n'
+        '    return {}\\n'
+        '\\n\\nclass CommandResultIn(\\n'
+    )
+    patched = patch_source(original)
+    compile(patched, "patched_gateway_route.py", "exec")
+
+
 def test_gateway_patch_preserves_tenant_fail_closed_and_per_command_audit_schema():
     from gateway_patches.agent_commands_audit import PATCH_MARKER, patch_source
 
