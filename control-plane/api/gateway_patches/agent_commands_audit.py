@@ -18,20 +18,26 @@ def _cg_live_outbox():
 
 
 @app.get("/v1/agent/commands")
-async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depends(require_api_key)):
+async def agent_commands(asset_id: str, x_api_key: str = Depends(require_api_key)):
     """Atomically mark queued commands delivered and persist their audit outbox events."""
-    import hashlib\n    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
+    import hashlib
+    ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
     if not ok_key:
         raise HTTPException(403, f"Agent commands rejected: {key_why}")
 
-    tenant_id = str(getattr(request.state, "tenant_id", "") or "default")
     now = time.time()
     delivered = []
 
     def apply_delivery(connection, operation_id):
+        asset = connection.execute(
+            "SELECT tenant_id FROM assets WHERE asset_id=?", (asset_id,)
+        ).fetchone()
+        if asset is None or str(asset["tenant_id"] or "").strip() != tenant_id:
+            raise HTTPException(403, "Agent command asset tenant scope changed")
         expired_ids = []
         delivered_ids = []
         delivered_actions = []
+        audit_events = []
         rows = connection.execute(
             """SELECT * FROM agent_commands
                WHERE asset_id=? AND status='queued'
@@ -52,7 +58,19 @@ async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depen
                     (now, command["id"]),
                 )
                 if cursor.rowcount == 1:
-                    expired_ids.append(str(command["id"]))
+                    expired_id = str(command["id"])
+                    expired_ids.append(expired_id)
+                    audit_events.append({
+                        "event": "expired",
+                        "command_id": expired_id,
+                        "pending_action_id": command.get("pending_action_id") or "",
+                        "action": command.get("action") or "",
+                        "target": str(command.get("target") or ""),
+                        "asset_id": asset_id,
+                        "actor": "gateway",
+                        "detail": "command TTL exceeded before delivery",
+                        "result_ok": 0,
+                    })
                 continue
 
             cursor = connection.execute(
@@ -65,6 +83,18 @@ async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depen
             delivered.append(command)
             delivered_ids.append(str(command["id"]))
             delivered_actions.append(str(command.get("action") or ""))
+            audit_events.append({
+                "event": "delivered",
+                "command_id": str(command["id"]),
+                "pending_action_id": command.get("pending_action_id") or "",
+                "action": command.get("action") or "",
+                "target": str(command.get("target") or ""),
+                "asset_id": asset_id,
+                "decision_id": command.get("decision_id") or "",
+                "detection_id": command.get("detection_id") or "",
+                "actor": "agent",
+                "detail": "pulled by agent (single-use)",
+            })
 
         return {
             "tenant_id": tenant_id,
@@ -72,18 +102,27 @@ async def agent_commands(asset_id: str, request: Request, x_api_key: str = Depen
             "delivered_command_ids": delivered_ids,
             "delivered_actions": delivered_actions,
             "expired_command_ids": expired_ids,
+            "audit_events": audit_events,
             "phase": "agent_commands_claimed",
         }
 
-    request_fingerprint = hashlib.sha256(
-        json.dumps(
-            {"method": "GET", "path": "/v1/agent/commands",
-             "asset_id": asset_id, "tenant_id": tenant_id},
-            sort_keys=True, separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
     with db() as connection:
-        operation = _cg_live_outbox().execute_operation_on_connection(
+        asset = connection.execute(
+            "SELECT tenant_id FROM assets WHERE asset_id=?", (asset_id,)
+        ).fetchone()
+        if asset is None:
+            raise HTTPException(404, "Agent command asset is not registered")
+        tenant_id = str(asset["tenant_id"] or "").strip()
+        if not tenant_id:
+            raise HTTPException(403, "Agent command asset has no tenant attribution")
+        request_fingerprint = hashlib.sha256(
+            json.dumps(
+                {"method": "GET", "path": "/v1/agent/commands",
+                 "asset_id": asset_id, "tenant_id": tenant_id},
+                sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        _cg_live_outbox().execute_operation_on_connection(
             connection,
             tenant_id=tenant_id,
             idempotency_key=uuid.uuid4().hex,
