@@ -34,23 +34,41 @@ class OperationResult:
 class SQLiteTransactionalOutbox:
     """Atomic SQLite operations plus ordered, at-least-once outbox delivery."""
 
-    def __init__(self, database_path: str | Path, *, busy_timeout_ms: int = 30000):
+    def __init__(
+        self, database_path: str | Path, *, busy_timeout_ms: int = 30000,
+        initialize: bool = True, read_only: bool = False,
+    ):
         self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout_ms = int(busy_timeout_ms)
+        self.read_only = bool(read_only)
         if self.busy_timeout_ms < 1:
             raise ValueError("busy_timeout_ms must be positive")
-        self._initialize()
+        if self.read_only and initialize:
+            raise ValueError("read-only outbox connections cannot initialize the schema")
+        if not self.read_only:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        elif not self.database_path.is_file():
+            raise FileNotFoundError("read-only outbox database does not exist")
+        if initialize:
+            self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            str(self.database_path), timeout=self.busy_timeout_ms / 1000,
-            isolation_level=None,
-        )
+        if self.read_only:
+            connection = sqlite3.connect(
+                f"{self.database_path.resolve().as_uri()}?mode=ro",
+                uri=True, timeout=self.busy_timeout_ms / 1000,
+                isolation_level=None,
+            )
+        else:
+            connection = sqlite3.connect(
+                str(self.database_path), timeout=self.busy_timeout_ms / 1000,
+                isolation_level=None,
+            )
         connection.row_factory = sqlite3.Row
-        connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("PRAGMA foreign_keys=ON")
+        if not self.read_only:
+            connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize(self) -> None:
@@ -91,6 +109,65 @@ class SQLiteTransactionalOutbox:
                 CREATE INDEX IF NOT EXISTS idx_cg_outbox_operation_order
                     ON cg_outbox(operation_id, sequence, status);
             """)
+            self._migrate_outbox_review_status(connection)
+
+    @staticmethod
+    def _migrate_outbox_review_status(connection: sqlite3.Connection) -> None:
+        """Add a durable operator-review state without discarding existing rows."""
+        schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='cg_outbox'"
+        ).fetchone()
+        if schema is None or "review_required" in str(schema["sql"]):
+            return
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DROP INDEX IF EXISTS idx_cg_outbox_ready")
+            connection.execute("DROP INDEX IF EXISTS idx_cg_outbox_operation_order")
+            connection.execute("ALTER TABLE cg_outbox RENAME TO cg_outbox_legacy")
+            connection.execute("""
+                CREATE TABLE cg_outbox (
+                    event_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL REFERENCES cg_operations(operation_id),
+                    tenant_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'inflight', 'delivered', 'review_required')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at REAL NOT NULL,
+                    lease_owner TEXT,
+                    lease_until REAL,
+                    last_error TEXT,
+                    created_at REAL NOT NULL,
+                    delivered_at REAL,
+                    UNIQUE(operation_id, sequence)
+                )
+            """)
+            connection.execute("""
+                INSERT INTO cg_outbox
+                (event_id, operation_id, tenant_id, sequence, event_type, payload_json,
+                 status, attempts, next_attempt_at, lease_owner, lease_until,
+                 last_error, created_at, delivered_at)
+                SELECT event_id, operation_id, tenant_id, sequence, event_type, payload_json,
+                       status, attempts, next_attempt_at, lease_owner, lease_until,
+                       last_error, created_at, delivered_at
+                FROM cg_outbox_legacy
+            """)
+            connection.execute("DROP TABLE cg_outbox_legacy")
+            connection.execute("""
+                CREATE INDEX idx_cg_outbox_ready
+                ON cg_outbox(status, next_attempt_at, created_at)
+            """)
+            connection.execute("""
+                CREATE INDEX idx_cg_outbox_operation_order
+                ON cg_outbox(operation_id, sequence, status)
+            """)
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
 
     @staticmethod
     def _json(value: Any) -> str:
@@ -426,11 +503,113 @@ class SQLiteTransactionalOutbox:
         finally:
             connection.close()
 
+    def retry_or_review(
+        self, *, event_id: str, worker_id: str, error: str,
+        max_attempts: int, delay_seconds: float, now: float | None = None,
+    ) -> str:
+        """Release a failed lease for bounded retry or move it to operator review."""
+        if int(max_attempts) < 1:
+            raise ValueError("max_attempts must be at least one")
+        timestamp = time.time() if now is None else float(now)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT attempts FROM cg_outbox
+                   WHERE event_id=? AND status='inflight' AND lease_owner=?
+                     AND lease_until>?""",
+                (event_id, worker_id, timestamp),
+            ).fetchone()
+            if row is None:
+                raise OutboxLeaseLost("outbox event is not leased by this worker")
+            attempts = int(row["attempts"])
+            if attempts >= int(max_attempts):
+                connection.execute(
+                    """UPDATE cg_outbox SET status='review_required',
+                       lease_owner=NULL, lease_until=NULL, last_error=?
+                       WHERE event_id=?""",
+                    (str(error)[:1000], event_id),
+                )
+                result = "review_required"
+            else:
+                connection.execute(
+                    """UPDATE cg_outbox SET status='pending', next_attempt_at=?,
+                       lease_owner=NULL, lease_until=NULL, last_error=?
+                       WHERE event_id=?""",
+                    (timestamp + max(0.0, float(delay_seconds)),
+                     str(error)[:1000], event_id),
+                )
+                result = "retry_scheduled"
+            connection.commit()
+            return result
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def review_queue(self, *, limit: int = 100) -> list[dict]:
+        """Return bounded, tenant-attributed events requiring operator review."""
+        if not 1 <= int(limit) <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT event_id, operation_id, tenant_id, sequence, event_type,
+                          payload_json, attempts, last_error, created_at
+                   FROM cg_outbox WHERE status='review_required'
+                   ORDER BY created_at, operation_id, sequence LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result.append(item)
+        return result
+
+    def queue_metrics(self, *, now: float | None = None) -> dict[str, int | float | bool | None]:
+        """Expose queue depth, oldest pending age, retries and review alerts."""
+        timestamp = time.time() if now is None else float(now)
+        with self._connect() as connection:
+            counts = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM cg_outbox GROUP BY status"
+            ).fetchall()
+            pending = connection.execute(
+                """SELECT MIN(created_at) AS oldest_created_at
+                   FROM cg_outbox WHERE status IN ('pending', 'inflight')"""
+            ).fetchone()
+            retries = connection.execute(
+                """SELECT COALESCE(SUM(
+                       CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END
+                   ), 0) AS retry_count FROM cg_outbox"""
+            ).fetchone()
+            total_attempts = connection.execute(
+                "SELECT COALESCE(SUM(attempts), 0) FROM cg_outbox"
+            ).fetchone()[0]
+        values = {"pending": 0, "inflight": 0, "delivered": 0, "review_required": 0}
+        values.update({row["status"]: int(row["count"]) for row in counts})
+        oldest = pending["oldest_created_at"]
+        pending_count = values["pending"] + values["inflight"]
+        return {
+            "queue_depth": pending_count,
+            "pending": values["pending"],
+            "inflight": values["inflight"],
+            "delivered": values["delivered"],
+            "review_required": values["review_required"],
+            "oldest_pending_seconds": (
+                max(0.0, timestamp - float(oldest)) if oldest is not None else 0.0
+            ),
+            "retry_count": int(retries["retry_count"] or 0),
+            "total_attempts": int(total_attempts or 0),
+            "review_alert": values["review_required"] > 0,
+        }
+
     def outbox_counts(self) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM cg_outbox GROUP BY status"
             ).fetchall()
-        counts = {"pending": 0, "inflight": 0, "delivered": 0}
+        counts = {"pending": 0, "inflight": 0, "delivered": 0, "review_required": 0}
         counts.update({row["status"]: int(row["count"]) for row in rows})
         return counts
