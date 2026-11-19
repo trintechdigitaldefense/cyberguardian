@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -26,7 +27,8 @@ def test_observation_counts_only_health_checks_completed_in_window():
         {"End": "2026-11-18T20:01:00Z", "ExitCode": 0},
     ])
 
-    running, status, checks = observation_health(snapshot, 179.0)
+    start = datetime(2026, 11, 18, 20, 0, 15, tzinfo=timezone.utc).timestamp()
+    running, status, checks = observation_health(snapshot, start)
 
     assert running is True
     assert status == "healthy"
