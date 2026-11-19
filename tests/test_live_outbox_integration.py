@@ -148,7 +148,7 @@ def test_patched_gateway_route_source_compiles():
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
-        '\n\nclass CommandResultIn(\n'
+        '\n\nclass CommandResultIn(BaseModel):\n    pass\n'
     )
     patched = patch_source(original)
     compile(patched, "patched_gateway_route.py", "exec")
@@ -161,7 +161,7 @@ def test_gateway_patch_preserves_tenant_fail_closed_and_per_command_audit_schema
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
-        '\n\nclass CommandResultIn(\n'
+        '\n\nclass CommandResultIn(BaseModel):\n    pass\n'
     )
     patched = patch_source(original)
     assert PATCH_MARKER in patched
@@ -248,7 +248,7 @@ def test_patched_gateway_route_returns_commands_and_persists_tenant_audit(tmp_pa
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
-        '\n\nclass CommandResultIn(\n'
+        '\n\nclass CommandResultIn(BaseModel):\n    pass\n'
     )
     patched = patch_source(original)
     namespace = {
@@ -350,7 +350,7 @@ def test_patched_gateway_route_rejects_unregistered_or_unattributed_assets(tmp_p
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
-        '\n\nclass CommandResultIn(\n'
+        '\n\nclass CommandResultIn(BaseModel):\n    pass\n'
     )
     namespace = {
         "Path": Path, "DB_PATH": database, "app": FakeApp(),
