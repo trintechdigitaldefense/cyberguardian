@@ -158,3 +158,198 @@ def test_gateway_patch_preserves_tenant_fail_closed_and_per_command_audit_schema
         '"audit_events": audit_events',
     ):
         assert field in patched
+
+
+
+def test_patched_gateway_route_returns_commands_and_persists_tenant_audit(tmp_path):
+    import asyncio
+    import contextlib
+    import json
+    import time
+    import uuid
+
+    from gateway_patches.agent_commands_audit import patch_source
+
+    class FakeApp:
+        def get(self, _path):
+            return lambda function: function
+
+    class FakeHTTPException(Exception):
+        def __init__(self, status_code, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+
+    class AgentIdentity:
+        @staticmethod
+        def assert_not_admin_key_on_agent(key):
+            return (key == "agent-key", "invalid agent key")
+
+    database = tmp_path / "gateway-route.sqlite3"
+
+    @contextlib.contextmanager
+    def db():
+        connection = sqlite3.connect(database, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE assets (asset_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL)"
+        )
+        connection.execute(
+            """CREATE TABLE agent_commands (
+                id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, status TEXT NOT NULL,
+                created_at REAL NOT NULL, parameters TEXT, completed_at REAL,
+                delivered_at REAL, pending_action_id TEXT, action TEXT, target TEXT,
+                decision_id TEXT, detection_id TEXT, signature TEXT,
+                signature_key_id TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO assets(asset_id, tenant_id) VALUES ('asset-a', 'tenant-a')"
+        )
+        connection.execute(
+            """INSERT INTO agent_commands
+               (id, asset_id, status, created_at, parameters, pending_action_id,
+                action, target, decision_id, detection_id, signature, signature_key_id)
+               VALUES ('cmd-deliver', 'asset-a', 'queued', 1, ?, 'pending-1',
+                       'isolate', 'host-a', 'decision-1', 'detection-1',
+                       'signed-envelope', 'key-1')""",
+            (json.dumps({"_expires_at": time.time() + 3600}),),
+        )
+        connection.execute(
+            """INSERT INTO agent_commands
+               (id, asset_id, status, created_at, parameters, pending_action_id,
+                action, target)
+               VALUES ('cmd-expire', 'asset-a', 'queued', 2, ?, 'pending-2',
+                       'terminate', 'host-b')""",
+            (json.dumps({"_expires_at": 1}),),
+        )
+
+    original = (
+        '@app.get("/v1/agent/commands")\n'
+        'async def agent_commands(asset_id: str):\n'
+        '    return {}\n'
+        '\n\nclass CommandResultIn(\n'
+    )
+    patched = patch_source(original)
+    namespace = {
+        "Path": Path,
+        "DB_PATH": database,
+        "app": FakeApp(),
+        "Depends": lambda value: value,
+        "require_api_key": object(),
+        "_agent_id": AgentIdentity(),
+        "HTTPException": FakeHTTPException,
+        "time": time,
+        "json": json,
+        "uuid": uuid,
+        "db": db,
+    }
+    exec(compile(patched, "patched_gateway_route.py", "exec"), namespace)
+    route = namespace["agent_commands"]
+
+    with pytest.raises(FakeHTTPException) as invalid_key:
+        asyncio.run(route("asset-a", x_api_key="admin-key"))
+    assert invalid_key.value.status_code == 403
+
+    response = asyncio.run(route("asset-a", x_api_key="agent-key"))
+    assert response["count"] == 1
+    assert response["commands"][0]["id"] == "cmd-deliver"
+    assert response["commands"][0]["signature"] == "signed-envelope"
+    assert response["commands"][0]["signature_key_id"] == "key-1"
+
+    with sqlite3.connect(database) as connection:
+        statuses = dict(connection.execute(
+            "SELECT id, status FROM agent_commands"
+        ).fetchall())
+        assert statuses == {"cmd-deliver": "delivered", "cmd-expire": "expired"}
+        completion = connection.execute(
+            "SELECT payload_json FROM cg_outbox WHERE event_type='operation_completed'"
+        ).fetchone()
+    payload = json.loads(completion[0])
+    assert payload["tenant_id"] == "tenant-a"
+    events = payload["result"]["audit_events"]
+    assert [event["event"] for event in events] == ["delivered", "expired"]
+    delivered = events[0]
+    assert delivered["pending_action_id"] == "pending-1"
+    assert delivered["target"] == "host-a"
+    assert delivered["decision_id"] == "decision-1"
+    assert delivered["detection_id"] == "detection-1"
+    expired = events[1]
+    assert expired["pending_action_id"] == "pending-2"
+    assert expired["target"] == "host-b"
+    assert expired["result_ok"] == 0
+
+
+def test_patched_gateway_route_rejects_unregistered_or_unattributed_assets(tmp_path):
+    import asyncio
+    import contextlib
+    import json
+    import time
+    import uuid
+
+    from gateway_patches.agent_commands_audit import patch_source
+
+    class FakeApp:
+        def get(self, _path):
+            return lambda function: function
+
+    class FakeHTTPException(Exception):
+        def __init__(self, status_code, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+
+    class AgentIdentity:
+        @staticmethod
+        def assert_not_admin_key_on_agent(_key):
+            return (True, "")
+
+    database = tmp_path / "gateway-tenant.sqlite3"
+
+    @contextlib.contextmanager
+    def db():
+        connection = sqlite3.connect(database, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE assets (asset_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE agent_commands (id TEXT PRIMARY KEY, asset_id TEXT, status TEXT, "
+            "created_at REAL, parameters TEXT, completed_at REAL, delivered_at REAL)"
+        )
+        connection.execute(
+            "INSERT INTO assets(asset_id, tenant_id) VALUES ('asset-empty', '')"
+        )
+
+    original = (
+        '@app.get("/v1/agent/commands")\n'
+        'async def agent_commands(asset_id: str):\n'
+        '    return {}\n'
+        '\n\nclass CommandResultIn(\n'
+    )
+    namespace = {
+        "Path": Path, "DB_PATH": database, "app": FakeApp(),
+        "Depends": lambda value: value, "require_api_key": object(),
+        "_agent_id": AgentIdentity(), "HTTPException": FakeHTTPException,
+        "time": time, "json": json, "uuid": uuid, "db": db,
+    }
+    exec(compile(patch_source(original), "patched_gateway_route.py", "exec"), namespace)
+    route = namespace["agent_commands"]
+
+    with pytest.raises(FakeHTTPException) as missing:
+        asyncio.run(route("unknown", x_api_key="agent-key"))
+    assert missing.value.status_code == 404
+
+    with pytest.raises(FakeHTTPException) as unattributed:
+        asyncio.run(route("asset-empty", x_api_key="agent-key"))
+    assert unattributed.value.status_code == 403
