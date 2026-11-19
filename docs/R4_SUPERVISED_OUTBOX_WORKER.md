@@ -23,7 +23,7 @@ The default Compose policy is eight attempts, starting at one second and capped 
 
 ## Persistent schema migration
 
-The worker upgrades the existing `cg_outbox` status constraint to add `review_required`. The migration runs transactionally, copies all existing outbox rows and lease/retry metadata, recreates indexes, and rolls back on failure. Existing pending, inflight and delivered rows are preserved. The migration is safe to rerun.
+Normal worker startup upgrades the existing `cg_outbox` status constraint to add `review_required`. The migration runs transactionally, copies all existing outbox rows and lease/retry metadata, recreates indexes, and rolls back on failure. Existing pending, inflight and delivered rows are preserved. The migration is safe to rerun.
 
 ## Docker deployment
 
@@ -32,7 +32,7 @@ The `outbox-worker` Compose service uses the same API image and the same persist
 - SQLite database: `/app/data/cyberguardian.db`
 - Hash-chained audit ledger: `/app/data/audit_ledger.jsonl`
 
-It receives no administrator, dashboard, decision-service or agent API credentials. It refuses to create a new database if the configured API database is missing, preventing silent operation against a separate empty file; the restart policy allows it to start after API database initialization. It restarts automatically and publishes an atomic, mode-0600 heartbeat file every health interval. The Docker health check verifies both queue state and heartbeat freshness; a missing/stale heartbeat or non-empty review queue returns a non-zero status so operators can see that intervention is required.
+It receives no administrator, dashboard, decision-service or agent API credentials. It refuses to create a new database if the configured API database is missing, preventing silent operation against a separate empty file; the restart policy allows it to start after API database initialization. It restarts automatically and publishes an atomic, mode-0600 heartbeat file every health interval. The Docker health check opens SQLite in URI read-only mode and does not run schema initialization or migrations. It verifies queue state and heartbeat freshness/status; a missing, stale, malformed, non-healthy (`degraded` or `review_required`) heartbeat, or non-empty review queue returns a non-zero status so operators can see that intervention is required. The standalone `--review-queue` inspection mode is also read-only.
 
 Start or update the stack from `deploy/docker` using the existing deployment procedure. Do not run the worker against a different database or ledger path from the API. Keep the SQLite database and WAL files on a local filesystem with reliable SQLite locking; do not share a SQLite database file over an unsupported network filesystem or between separate hosts.
 
@@ -54,7 +54,7 @@ python outbox_worker.py \
   --review-queue --review-limit 100
 ```
 
-The health output includes worker status, heartbeat age/staleness, queue depth, pending/inflight/delivered counts, oldest pending age, retry count, total attempts, review-required count and a review alert. The review-queue command is read-only and returns tenant-attributed event metadata, payload, attempt count and the last safe error summary.
+The health output includes worker status, heartbeat age/staleness/health, queue depth, pending/inflight/delivered counts, oldest pending age, retry count, total attempts, review-required count and a review alert. The review-queue command is read-only and returns tenant-attributed event metadata, payload, attempt count and the last safe error summary.
 
 Do not manually change event status or delete outbox rows to clear an alert. Investigate the sink and ledger first, verify the ledger chain, compare the stable event ID and payload, and record an operator decision through the approved incident/change process. This PR intentionally does not provide an unaudited "force retry" or "discard" control.
 
