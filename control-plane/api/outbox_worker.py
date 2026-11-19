@@ -188,18 +188,29 @@ def _write_heartbeat(path: Path, health: dict, *, now: float | None = None) -> N
 
 def _heartbeat_status(
     path: Path, *, now: float, stale_seconds: float
-) -> tuple[float | None, bool]:
-    """Return heartbeat age and fail closed for missing, malformed or stale files."""
+) -> tuple[float | None, bool, bool]:
+    """Return age, staleness and unhealthy state; fail closed on invalid records."""
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            return None, True, True
+        worker_id = record.get("worker_id")
+        status = record.get("status")
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            return None, True, True
+        if status not in {"healthy", "degraded", "review_required"}:
+            return None, True, True
         timestamp = float(record["timestamp"])
+        if not (timestamp == timestamp and abs(timestamp) != float("inf")):
+            return None, True, True
         age = float(now) - timestamp
         if age < -5:
-            return None, True
+            return None, True, True
         age = max(0.0, age)
-        return age, age > float(stale_seconds)
+        stale = age > float(stale_seconds)
+        return age, stale, stale or status != "healthy"
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return None, True
+        return None, True, True
 
 
 def _json_log(level: int, message: str, **fields) -> None:
@@ -243,7 +254,10 @@ def main(argv: list[str] | None = None) -> int:
             "database file does not exist; refusing to create a separate outbox database"
         )
 
-    store = SQLiteTransactionalOutbox(database)
+    inspection_only = args.health_once or args.review_queue
+    store = SQLiteTransactionalOutbox(
+        database, initialize=not inspection_only, read_only=inspection_only
+    )
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
     dispatcher = OutboxDispatcher(
         store,
@@ -258,15 +272,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.health_once:
         health = dispatcher.health()
         heartbeat_stale = False
+        heartbeat_unhealthy = False
         if heartbeat_path is not None:
-            age, heartbeat_stale = _heartbeat_status(
+            age, heartbeat_stale, heartbeat_unhealthy = _heartbeat_status(
                 heartbeat_path, now=time.time(),
                 stale_seconds=args.health_stale_seconds,
             )
             health["heartbeat_age_seconds"] = age
             health["heartbeat_stale"] = heartbeat_stale
+            health["heartbeat_unhealthy"] = heartbeat_unhealthy
+        unhealthy = (
+            health["status"] != "healthy"
+            or health["review_alert"]
+            or heartbeat_stale
+            or heartbeat_unhealthy
+        )
         print(json.dumps(health, sort_keys=True))
-        return 2 if health["review_alert"] or heartbeat_stale else 0
+        return 2 if unhealthy else 0
 
     if args.review_queue:
         print(json.dumps(store.review_queue(limit=args.review_limit), sort_keys=True))
