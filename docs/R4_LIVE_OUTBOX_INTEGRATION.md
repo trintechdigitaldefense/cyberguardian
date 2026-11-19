@@ -8,7 +8,7 @@ When an enrolled agent polls for commands, the gateway:
 1. Opens the existing CyberGuardian application database.
 2. Selects queued commands for the authenticated asset.
 3. Marks eligible commands as delivered (or expired) using compare-and-set updates.
-4. Writes the operation record plus durable `operation_intent` and `operation_completed` events through the **same SQLite connection and transaction**.
+4. Writes the operation record plus durable `operation_intent` and `operation_completed` events through the **same SQLite connection and transaction**. The completion payload contains an `audit_events` array with one structured record per delivered or expired command.
 5. Commits the command-state changes and outbox events together.
 6. Returns the selected commands to the agent.
 
@@ -18,7 +18,9 @@ The outbox tables live in the same `DB_PATH` database as `agent_commands`. The n
 
 - A crash before commit leaves neither the command-state transition nor its outbox intent/completion records committed.
 - A crash after commit leaves the command-state transition and durable outbox records available for recovery and later audit delivery.
-- Tenant identity is copied from the gateway's authenticated agent request context into both operation and outbox rows.
+- Tenant identity is required from the gateway's authenticated agent request context; missing tenant context fails closed rather than falling back to a shared default. It is copied into both operation and outbox rows.
+- Each command audit record retains the prior per-command forensic fields: event type, command ID, pending-action ID, action, target, asset ID, actor and detail; delivered records also retain decision and detection IDs, while expired records retain the failed result status.
+- The per-command records are durably nested in the `operation_completed` event's `result.audit_events` array and are committed atomically with the command status transitions.
 - The existing asset-bound agent credential checks, tenant checks, single-use compare-and-set command transition, command expiry handling and command-signing middleware remain in place.
 - The outbox event sink can later deliver the committed events with stable event IDs.
 
