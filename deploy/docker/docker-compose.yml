@@ -71,7 +71,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-    networks: [cg-backend]
+    network_mode: none
   dashboard:
     build: ../../dashboard
     ports: ["127.0.0.1:3000:3000"]
