@@ -245,16 +245,61 @@ def test_heartbeat_is_atomic_private_and_stale_detection_fails_closed(tmp_path):
     )
     assert path.exists()
     assert path.stat().st_mode & 0o777 == 0o600
-    age, stale = _heartbeat_status(path, now=150, stale_seconds=90)
+    age, stale, unhealthy = _heartbeat_status(path, now=150, stale_seconds=90)
     assert age == 50
     assert stale is False
+    assert unhealthy is False
 
-    age, stale = _heartbeat_status(path, now=191, stale_seconds=90)
+    age, stale, unhealthy = _heartbeat_status(path, now=191, stale_seconds=90)
     assert age == 91
     assert stale is True
+    assert unhealthy is True
 
-    missing_age, missing_stale = _heartbeat_status(
+    _write_heartbeat(
+        path, {"worker_id": "worker-a", "status": "degraded"}, now=150
+    )
+    age, stale, unhealthy = _heartbeat_status(path, now=151, stale_seconds=90)
+    assert age == 1
+    assert stale is False
+    assert unhealthy is True
+
+    _write_heartbeat(
+        path, {"worker_id": "worker-a", "status": "review_required"}, now=150
+    )
+    age, stale, unhealthy = _heartbeat_status(path, now=151, stale_seconds=90)
+    assert age == 1
+    assert stale is False
+    assert unhealthy is True
+
+    path.write_text('{"timestamp": 150, "status": "healthy"}', encoding="utf-8")
+    age, stale, unhealthy = _heartbeat_status(path, now=151, stale_seconds=90)
+    assert age is None
+    assert stale is True
+    assert unhealthy is True
+
+    missing_age, missing_stale, missing_unhealthy = _heartbeat_status(
         tmp_path / "missing.heartbeat", now=200, stale_seconds=90
     )
     assert missing_age is None
     assert missing_stale is True
+    assert missing_unhealthy is True
+
+
+def test_read_only_inspection_does_not_initialize_or_mutate_schema(tmp_path):
+    path = tmp_path / "readonly.sqlite3"
+    store = SQLiteTransactionalOutbox(path)
+    before = sqlite3.connect(path)
+    before_version = before.execute("PRAGMA schema_version").fetchone()[0]
+    before.close()
+
+    inspector = SQLiteTransactionalOutbox(
+        path, initialize=False, read_only=True
+    )
+    assert inspector.queue_metrics(now=100)["queue_depth"] == 0
+    assert inspector.review_queue() == []
+
+    after = sqlite3.connect(path)
+    after_version = after.execute("PRAGMA schema_version").fetchone()[0]
+    after.close()
+    assert after_version == before_version
+    assert inspector.read_only is True
