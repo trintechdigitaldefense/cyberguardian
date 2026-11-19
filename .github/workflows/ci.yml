@@ -3,7 +3,7 @@ on:
   push:
     branches: [main, "r2-*", "r4-*"]
   pull_request:
-    branches: [main, "r2-*"]
+    branches: [main, "r2-*", "r4-*"]
 
 jobs:
   python:
@@ -251,6 +251,7 @@ jobs:
           print("R4 safe command persisted:", dict(row))
           PY
           CG_AGENT_TEST_CREDENTIAL_FILE="$DATA_DIR/compose-agent-credential.json" python3 "$ROOT/scripts/test_r4_supervised_workflow.py"
+          python3 "$ROOT/scripts/verify_compose_outbox_health.py" --project "$PROJECT" --compose-file "$ROOT/deploy/docker/docker-compose.yml"
   containment-integration:
     runs-on: ubuntu-latest
     steps:
