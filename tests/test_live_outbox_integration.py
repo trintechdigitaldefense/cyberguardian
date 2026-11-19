@@ -150,7 +150,8 @@ def test_gateway_patch_preserves_tenant_fail_closed_and_per_command_audit_schema
     )
     patched = patch_source(original)
     assert PATCH_MARKER in patched
-    assert 'requires an authenticated tenant context' in patched
+    assert 'SELECT tenant_id FROM assets WHERE asset_id=?' in patched
+    assert 'Agent command asset is not registered' in patched
     for field in (
         '"pending_action_id"', '"target"', '"decision_id"',
         '"detection_id"', '"actor"', '"detail"', '"result_ok"',
