@@ -145,10 +145,10 @@ def test_patched_gateway_route_source_compiles():
     from gateway_patches.agent_commands_audit import patch_source
 
     original = (
-        '@app.get("/v1/agent/commands")\\n'
-        'async def agent_commands(asset_id: str):\\n'
-        '    return {}\\n'
-        '\\n\\nclass CommandResultIn(\\n'
+        '@app.get("/v1/agent/commands")\n'
+        'async def agent_commands(asset_id: str):\n'
+        '    return {}\n'
+        '\n\nclass CommandResultIn(\n'
     )
     patched = patch_source(original)
     compile(patched, "patched_gateway_route.py", "exec")
