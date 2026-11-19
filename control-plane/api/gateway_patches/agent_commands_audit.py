@@ -1,76 +1,138 @@
-"""Deterministic source patch: avoid nested SQLite audit writes in command polling."""
+"""Deterministic source patch: transactionally outbox agent command delivery."""
 
 PATCH_MARKER = "# CYBERGUARDIAN_PATCH: agent_commands_audit_v1"
 
 PATCHED_ROUTE = '''# CYBERGUARDIAN_PATCH: agent_commands_audit_v1
+from transactional_outbox import SQLiteTransactionalOutbox as _SQLiteTransactionalOutbox
+_CG_LIVE_OUTBOX = None
+_CG_LIVE_OUTBOX_PATH = None
+
+
+def _cg_live_outbox():
+    global _CG_LIVE_OUTBOX, _CG_LIVE_OUTBOX_PATH
+    current_path = Path(DB_PATH)
+    if _CG_LIVE_OUTBOX is None or _CG_LIVE_OUTBOX_PATH != current_path:
+        _CG_LIVE_OUTBOX = _SQLiteTransactionalOutbox(current_path)
+        _CG_LIVE_OUTBOX_PATH = current_path
+    return _CG_LIVE_OUTBOX
+
+
 @app.get("/v1/agent/commands")
 async def agent_commands(asset_id: str, x_api_key: str = Depends(require_api_key)):
-    """Agent pulls queued containment commands (single-use; expired commands skipped)."""
+    """Atomically mark queued commands delivered and persist their audit outbox events."""
+    import hashlib
     ok_key, key_why = _agent_id.assert_not_admin_key_on_agent(x_api_key)
     if not ok_key:
         raise HTTPException(403, f"Agent commands rejected: {key_why}")
+
     now = time.time()
-    audit_events = []
-    with db() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM agent_commands
-            WHERE asset_id=? AND status='queued'
-            ORDER BY created_at ASC LIMIT 20
-            """,
+    delivered = []
+
+    def apply_delivery(connection, operation_id):
+        asset = connection.execute(
+            "SELECT tenant_id FROM assets WHERE asset_id=?", (asset_id,)
+        ).fetchone()
+        if asset is None or str(asset["tenant_id"] or "").strip() != tenant_id:
+            raise HTTPException(403, "Agent command asset tenant scope changed")
+        expired_ids = []
+        delivered_ids = []
+        delivered_actions = []
+        audit_events = []
+        rows = connection.execute(
+            """SELECT * FROM agent_commands
+               WHERE asset_id=? AND status='queued'
+               ORDER BY created_at ASC LIMIT 20""",
             (asset_id,),
         ).fetchall()
-        commands = []
-        for r in rows:
-            d = dict(r)
+        for row in rows:
+            command = dict(row)
             try:
-                d["parameters"] = json.loads(d.get("parameters") or "{}")
-            except Exception:
-                d["parameters"] = {}
-            exp = d["parameters"].get("_expires_at")
-            if exp is not None and float(exp) < now:
-                conn.execute(
-                    "UPDATE agent_commands SET status='expired', completed_at=? WHERE id=? AND status='queued'",
-                    (now, d["id"]),
+                command["parameters"] = json.loads(command.get("parameters") or "{}")
+            except (TypeError, ValueError):
+                command["parameters"] = {}
+            expires_at = command["parameters"].get("_expires_at")
+            if expires_at is not None and float(expires_at) < now:
+                cursor = connection.execute(
+                    """UPDATE agent_commands SET status='expired', completed_at=?
+                       WHERE id=? AND status='queued'""",
+                    (now, command["id"]),
                 )
-                audit_events.append({
-                    "event": "expired",
-                    "command_id": d["id"],
-                    "pending_action_id": d.get("pending_action_id") or "",
-                    "action": d.get("action") or "",
-                    "target": str(d.get("target") or ""),
-                    "asset_id": asset_id,
-                    "actor": "gateway",
-                    "detail": "command TTL exceeded before delivery",
-                    "result_ok": 0,
-                })
+                if cursor.rowcount == 1:
+                    expired_id = str(command["id"])
+                    expired_ids.append(expired_id)
+                    audit_events.append({
+                        "event": "expired",
+                        "command_id": expired_id,
+                        "pending_action_id": command.get("pending_action_id") or "",
+                        "action": command.get("action") or "",
+                        "target": str(command.get("target") or ""),
+                        "asset_id": asset_id,
+                        "actor": "gateway",
+                        "detail": "command TTL exceeded before delivery",
+                        "result_ok": 0,
+                    })
                 continue
-            # Single-use: only deliver if still queued (compare-and-set).
-            cur = conn.execute(
-                "UPDATE agent_commands SET status='delivered', delivered_at=? WHERE id=? AND status='queued'",
-                (now, d["id"]),
+
+            cursor = connection.execute(
+                """UPDATE agent_commands SET status='delivered', delivered_at=?
+                   WHERE id=? AND status='queued'""",
+                (now, command["id"]),
             )
-            if cur.rowcount != 1:
+            if cursor.rowcount != 1:
                 continue
-            commands.append(d)
+            delivered.append(command)
+            delivered_ids.append(str(command["id"]))
+            delivered_actions.append(str(command.get("action") or ""))
             audit_events.append({
                 "event": "delivered",
-                "command_id": d["id"],
-                "pending_action_id": d.get("pending_action_id") or "",
-                "action": d.get("action") or "",
-                "target": str(d.get("target") or ""),
+                "command_id": str(command["id"]),
+                "pending_action_id": command.get("pending_action_id") or "",
+                "action": command.get("action") or "",
+                "target": str(command.get("target") or ""),
                 "asset_id": asset_id,
-                "decision_id": d.get("decision_id") or "",
-                "detection_id": d.get("detection_id") or "",
+                "decision_id": command.get("decision_id") or "",
+                "detection_id": command.get("detection_id") or "",
                 "actor": "agent",
                 "detail": "pulled by agent (single-use)",
             })
 
-    # Audit writes use a separate SQLite connection. Commit the command state
-    # transaction first to prevent nested writers from locking the database.
-    for event in audit_events:
-        write_audit(**event)
-    return {"asset_id": asset_id, "count": len(commands), "commands": commands}
+        return {
+            "tenant_id": tenant_id,
+            "asset_id": asset_id,
+            "delivered_command_ids": delivered_ids,
+            "delivered_actions": delivered_actions,
+            "expired_command_ids": expired_ids,
+            "audit_events": audit_events,
+            "phase": "agent_commands_claimed",
+        }
+
+    with db() as connection:
+        asset = connection.execute(
+            "SELECT tenant_id FROM assets WHERE asset_id=?", (asset_id,)
+        ).fetchone()
+        if asset is None:
+            raise HTTPException(404, "Agent command asset is not registered")
+        tenant_id = str(asset["tenant_id"] or "").strip()
+        if not tenant_id:
+            raise HTTPException(403, "Agent command asset has no tenant attribution")
+        request_fingerprint = hashlib.sha256(
+            json.dumps(
+                {"method": "GET", "path": "/v1/agent/commands",
+                 "asset_id": asset_id, "tenant_id": tenant_id},
+                sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        _cg_live_outbox().execute_operation_on_connection(
+            connection,
+            tenant_id=tenant_id,
+            idempotency_key=uuid.uuid4().hex,
+            request_hash=request_fingerprint,
+            handler=apply_delivery,
+        )
+
+    # Audit delivery is now durable in the same SQLite commit as the command
+    # status transition. PR #17 supplies the supervised ledger dispatcher.
+    return {"asset_id": asset_id, "count": len(delivered), "commands": delivered}
 '''
 
 

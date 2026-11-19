@@ -169,6 +169,89 @@ class SQLiteTransactionalOutbox:
         finally:
             connection.close()
 
+    def execute_operation_on_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        tenant_id: str,
+        idempotency_key: str,
+        request_hash: str,
+        handler: Callable[[sqlite3.Connection, str], Any],
+        now: float | None = None,
+    ) -> OperationResult:
+        """Atomically execute against the caller's existing application DB connection.
+
+        This is the live-integration path: application state and outbox rows
+        must use the same SQLite database and the exact same connection. The
+        caller owns connection lifetime; this method owns the transaction and
+        commits only after business writes, operation metadata and outbox
+        intent/completion events are all durable.
+        """
+        tenant_id = str(tenant_id).strip()
+        idempotency_key = str(idempotency_key).strip()
+        request_hash = str(request_hash).strip()
+        if not tenant_id or not idempotency_key or not request_hash:
+            raise ValueError("tenant_id, idempotency_key and request_hash are required")
+        if len(idempotency_key) > 256 or len(request_hash) > 256:
+            raise ValueError("idempotency key or request hash is too long")
+        if connection.in_transaction:
+            raise RuntimeError("live outbox requires ownership of a fresh transaction")
+        timestamp = time.time() if now is None else float(now)
+        connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT operation_id, request_hash, status, result_json
+                   FROM cg_operations WHERE tenant_id=? AND idempotency_key=?""",
+                (tenant_id, idempotency_key),
+            ).fetchone()
+            if existing:
+                if existing["request_hash"] != request_hash:
+                    raise IdempotencyConflict(
+                        "idempotency key already belongs to a different request"
+                    )
+                connection.commit()
+                return OperationResult(
+                    existing["operation_id"], existing["status"],
+                    json.loads(existing["result_json"]), True,
+                )
+
+            operation_id = uuid.uuid4().hex
+            connection.execute(
+                """INSERT INTO cg_operations
+                   (operation_id, tenant_id, idempotency_key, request_hash, status,
+                    result_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'completed', 'null', ?, ?)""",
+                (operation_id, tenant_id, idempotency_key, request_hash,
+                 timestamp, timestamp),
+            )
+            self._enqueue(
+                connection, operation_id, tenant_id, 1, "operation_intent",
+                {"operation_id": operation_id, "tenant_id": tenant_id,
+                 "request_hash": request_hash, "phase": "accepted"}, timestamp,
+            )
+            result = handler(connection, operation_id)
+            result_json = self._json(result)
+            connection.execute(
+                "UPDATE cg_operations SET result_json=?, updated_at=? WHERE operation_id=?",
+                (result_json, timestamp, operation_id),
+            )
+            self._enqueue(
+                connection, operation_id, tenant_id, 2, "operation_completed",
+                {"operation_id": operation_id, "tenant_id": tenant_id,
+                 "phase": "completed", "result": result}, timestamp,
+            )
+            connection.commit()
+            return OperationResult(
+                operation_id, "completed", json.loads(result_json), False
+            )
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
     def _enqueue(
         self, connection: sqlite3.Connection, operation_id: str, tenant_id: str,
         sequence: int, event_type: str, payload: dict, timestamp: float,
