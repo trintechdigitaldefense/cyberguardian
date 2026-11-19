@@ -23,6 +23,8 @@ The Compose acceptance job must prove more than that the worker container starte
 
 The gate is implemented by `scripts/verify_compose_outbox_health.py` and is invoked after the existing Compose supervised-workflow exercise. It is a supervised CI health-stability check, not proof of 24-hour availability or physical host recovery.
 
+The first exact-head CI execution passed on `fda64fb6a6d5c89abdf6abf390b99b124e972a9a` in Actions run [44438882231](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/44438882231): the worker reached `healthy`, remained running for 70.0 seconds, completed two successful Docker health checks, and had zero failed checks. This is automated Compose evidence only.
+
 For a running isolated Compose project, it can also be invoked manually from the repository root:
 
 ```bash
@@ -39,7 +41,7 @@ The procedures in `docs/R4_CLIENT_READINESS_DRILLS.md` and `docs/R4_OPERATIONAL_
 
 | ID | Validation | Required evidence for PASS | Current state |
 |---|---|---|---|
-| COMPOSE-01 | Sustained worker health in isolated Compose | Exact commit, CI run/job, worker reaches `healthy`, at least two successful health-check executions across the 70-second observation, no failed checks | PENDING CI |
+| COMPOSE-01 | Sustained worker health in isolated Compose | Exact commit, CI run/job, worker reaches `healthy`, at least two successful health-check executions across the 70-second observation, no failed checks | PASS — Actions run [44438882231](https://github.com/trintechdigitaldefense/cyberguardian/actions/runs/44438882231), tested head `fda64fb6a6d5c89abdf6abf390b99b124e972a9a`: 70.0 seconds, 2 successful checks, 0 failed |
 | PROC-02 | Abrupt outbox-worker process termination and restart | Worker/container timeline, lease recovery, stable event ID, one ledger record, delivered outbox state, no remote-command replay | NOT RUN |
 | HOST-01 | Abrupt host/power-loss recovery on a disposable host or VM | Hypervisor/power event timeline, SQLite `integrity_check`, outbox/ledger reconciliation, audit-chain verification, restart logs | NOT RUN |
 | NET-01/02 | Physical test-agent network interruption and reconnect | Before/during/after queue counts and hashes, synthetic event IDs, timestamps, controller acknowledgements, duplicate check | NOT RUN |
