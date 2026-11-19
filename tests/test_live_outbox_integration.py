@@ -145,6 +145,7 @@ def test_patched_gateway_route_source_compiles():
     from gateway_patches.agent_commands_audit import patch_source
 
     original = (
+        'from pydantic import BaseModel\n\n'
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
@@ -158,6 +159,7 @@ def test_gateway_patch_preserves_tenant_fail_closed_and_per_command_audit_schema
     from gateway_patches.agent_commands_audit import PATCH_MARKER, patch_source
 
     original = (
+        'from pydantic import BaseModel\n\n'
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
@@ -245,6 +247,7 @@ def test_patched_gateway_route_returns_commands_and_persists_tenant_audit(tmp_pa
         )
 
     original = (
+        'from pydantic import BaseModel\n\n'
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
@@ -347,6 +350,7 @@ def test_patched_gateway_route_rejects_unregistered_or_unattributed_assets(tmp_p
         )
 
     original = (
+        'from pydantic import BaseModel\n\n'
         '@app.get("/v1/agent/commands")\n'
         'async def agent_commands(asset_id: str):\n'
         '    return {}\n'
