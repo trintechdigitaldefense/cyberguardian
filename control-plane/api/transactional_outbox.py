@@ -34,23 +34,41 @@ class OperationResult:
 class SQLiteTransactionalOutbox:
     """Atomic SQLite operations plus ordered, at-least-once outbox delivery."""
 
-    def __init__(self, database_path: str | Path, *, busy_timeout_ms: int = 30000):
+    def __init__(
+        self, database_path: str | Path, *, busy_timeout_ms: int = 30000,
+        initialize: bool = True, read_only: bool = False,
+    ):
         self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout_ms = int(busy_timeout_ms)
+        self.read_only = bool(read_only)
         if self.busy_timeout_ms < 1:
             raise ValueError("busy_timeout_ms must be positive")
-        self._initialize()
+        if self.read_only and initialize:
+            raise ValueError("read-only outbox connections cannot initialize the schema")
+        if not self.read_only:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        elif not self.database_path.is_file():
+            raise FileNotFoundError("read-only outbox database does not exist")
+        if initialize:
+            self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            str(self.database_path), timeout=self.busy_timeout_ms / 1000,
-            isolation_level=None,
-        )
+        if self.read_only:
+            connection = sqlite3.connect(
+                f"{self.database_path.resolve().as_uri()}?mode=ro",
+                uri=True, timeout=self.busy_timeout_ms / 1000,
+                isolation_level=None,
+            )
+        else:
+            connection = sqlite3.connect(
+                str(self.database_path), timeout=self.busy_timeout_ms / 1000,
+                isolation_level=None,
+            )
         connection.row_factory = sqlite3.Row
-        connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("PRAGMA foreign_keys=ON")
+        if not self.read_only:
+            connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize(self) -> None:
