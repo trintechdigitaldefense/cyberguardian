@@ -27,8 +27,11 @@ def test_live_operation_commits_business_state_and_outbox_on_same_connection(tmp
     path, outbox = setup_database(tmp_path)
     connection = sqlite3.connect(path, isolation_level=None)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=OFF")
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
     try:
         def deliver(conn, operation_id):
+            assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
             cursor = conn.execute(
                 "UPDATE agent_commands SET status='delivered' "
                 "WHERE id='cmd-1' AND status='queued'"
